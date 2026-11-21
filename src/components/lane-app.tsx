@@ -14,26 +14,29 @@ import {
   Trash2,
   Volume2,
 } from "lucide-react";
-import { synthesizeSpeech } from "@/lib/tts.functions";
+import { getTtsStatus, synthesizeSpeech } from "@/lib/tts.functions";
 import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
 import { SPEED_OPTIONS, useLane } from "@/lib/lane-store";
 import { DEVICE_VOICE, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
+import { splitSpeakable } from "@/lib/sentences";
+import { TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
-const audioCache = new Map<string, string>();
+type CachedClip = { url: string; speedApplied: boolean };
+const audioCache = new Map<string, CachedClip>();
 const cacheOrder: string[] = [];
 
-function remember(key: string, url: string) {
+function remember(key: string, clip: CachedClip) {
   if (audioCache.has(key)) return;
-  audioCache.set(key, url);
+  audioCache.set(key, clip);
   cacheOrder.push(key);
-  while (cacheOrder.length > 6) {
+  while (cacheOrder.length > 24) {
     const old = cacheOrder.shift();
     if (!old) break;
     const prev = audioCache.get(old);
-    if (prev) URL.revokeObjectURL(prev);
+    if (prev) URL.revokeObjectURL(prev.url);
     audioCache.delete(old);
   }
 }
@@ -56,8 +59,10 @@ export function LaneApp() {
   const rotate = useLane((s) => s.rotate);
   const speed = useLane((s) => s.speed);
   const repeat = useLane((s) => s.repeat);
+  const ttsModel = useLane((s) => s.ttsModel);
   const setVoice = useLane((s) => s.setVoice);
   const setRotate = useLane((s) => s.setRotate);
+  const setTtsModel = useLane((s) => s.setTtsModel);
   const setSpeed = useLane((s) => s.setSpeed);
   const setRepeat = useLane((s) => s.setRepeat);
   const theme = useLane((s) => s.theme);
@@ -82,6 +87,9 @@ export function LaneApp() {
   const [auditionId, setAuditionId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
+  const [pieceIndex, setPieceIndex] = useState(0);
+  const [pieceCount, setPieceCount] = useState(1);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const gen = useRef(0);
@@ -90,6 +98,8 @@ export function LaneApp() {
   const deviceKeep = useRef<number | null>(null);
   const loadedKey = useRef<string | null>(null);
   const playingId = useRef<string | null>(null);
+  const speedAppliedRef = useRef(false);
+  const endedWaiter = useRef<((ok: boolean) => void) | null>(null);
   const modeRef = useRef<"lane" | "audition">("lane");
   const wakeRef = useRef<WakeLockSentinel | null>(null);
   const advanceRef = useRef<(fromIndex: number) => void>(() => {});
@@ -123,6 +133,10 @@ export function LaneApp() {
       setProgress(d && Number.isFinite(d) ? audio.currentTime / d : 0);
     };
     const onEnd = () => {
+      if (endedWaiter.current) {
+        endedWaiter.current(true);
+        return;
+      }
       if (modeRef.current === "audition") {
         setPhase("idle");
         setProgress(0);
@@ -153,10 +167,20 @@ export function LaneApp() {
   }, [cards]);
 
   useEffect(() => {
-    if (audioRef.current && modeRef.current === "lane") {
+    if (audioRef.current && modeRef.current === "lane" && !speedAppliedRef.current) {
       audioRef.current.playbackRate = speed;
     }
   }, [speed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getTtsStatus().then((status) => {
+      if (!cancelled) setTtsStatus(status);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const onVis = () => {
@@ -242,16 +266,46 @@ export function LaneApp() {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }
 
+  function audioCacheKey(voice: string, text: string, model: string, speed: number) {
+    return `${model}\0${voice}\0${speed}\0${text}`;
+  }
+
   async function ensureAudio(text: string, voice: string, signal?: AbortSignal) {
-    const key = `${voice}\0${text}`;
+    const state = useLane.getState();
+    const model = state.ttsModel;
+    const speed = state.speed;
+    const key = audioCacheKey(voice, text, model, speed);
     const hit = audioCache.get(key);
-    if (hit) return { key, url: hit };
-    const result = await synthesizeSpeech({ data: { text, voiceId: voice }, signal });
+    if (hit) return { key, url: hit.url, speedApplied: hit.speedApplied, provider: "cache" as const };
+    const result = await synthesizeSpeech({ data: { text, voiceId: voice, speed, model }, signal });
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (!result.ok) throw new Error(result.error);
     const url = b64ToUrl(result.audio, result.mime);
-    remember(key, url);
-    return { key, url };
+    remember(key, { url, speedApplied: result.speedApplied });
+    if (result.provider === "voicestudio" || result.provider === "xai") {
+      setTtsStatus((current) => ({
+        provider: result.provider,
+        model: result.model,
+        voicestudioUp: result.provider === "voicestudio" || Boolean(current?.voicestudioUp),
+        xaiConfigured: result.provider === "xai" || Boolean(current?.xaiConfigured),
+        message:
+          result.provider === "voicestudio"
+            ? `Using local VoiceStudio (${result.model === "kittentts" ? "KittenTTS" : "OmniVoice"}).`
+            : "VoiceStudio is not running. Using the xAI cloud voice.",
+      }));
+    }
+    return { key, url, speedApplied: result.speedApplied, provider: result.provider };
+  }
+
+  function prefetchSentence(text: string, voice: string) {
+    const state = useLane.getState();
+    if (state.voiceId === "device") return;
+    const key = audioCacheKey(voice, text, state.ttsModel, state.speed);
+    if (audioCache.has(key)) return;
+    prefetchAbort.current?.abort();
+    const ac = new AbortController();
+    prefetchAbort.current = ac;
+    void ensureAudio(text, voice, ac.signal).catch(() => {});
   }
 
   function prefetchAhead(fromIndex: number) {
@@ -259,11 +313,27 @@ export function LaneApp() {
     const nextCard = state.cards[fromIndex + 1];
     if (!nextCard || state.voiceId === "device") return;
     const voice = voiceForCard(fromIndex + 1, state.voiceId, state.rotate);
-    if (audioCache.has(`${voice.id}\0${nextCard.text}`)) return;
-    prefetchAbort.current?.abort();
-    const ac = new AbortController();
-    prefetchAbort.current = ac;
-    void ensureAudio(nextCard.text, voice.id, ac.signal).catch(() => {});
+    const first = splitSpeakable(nextCard.text)[0] ?? nextCard.text;
+    prefetchSentence(first, voice.id);
+  }
+
+  function waitForAudioEnd(token: number): Promise<void> {
+    const audio = audioRef.current;
+    if (!audio) return Promise.resolve();
+    if (audio.ended) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const finish = (ok: boolean) => {
+        if (endedWaiter.current !== finish) return;
+        endedWaiter.current = null;
+        if (token !== gen.current) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+        if (ok) resolve();
+        else reject(new DOMException("Aborted", "AbortError"));
+      };
+      endedWaiter.current = finish;
+    });
   }
 
   function playDevice(text: string, token: number, rate: number) {
@@ -337,6 +407,35 @@ export function LaneApp() {
   }
   advanceRef.current = advanceAfter;
 
+  async function playGeneratedPieces(pieces: string[], voice: string, token: number, startAt: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setPieceCount(pieces.length);
+    for (let i = startAt; i < pieces.length; i++) {
+      if (token !== gen.current || modeRef.current !== "lane") return;
+      setPieceIndex(i);
+      const piece = pieces[i]!;
+      const nextPiece = pieces[i + 1];
+      if (nextPiece) prefetchSentence(nextPiece, voice);
+      else prefetchAhead(useLane.getState().index);
+      const { key, url, speedApplied } = await ensureAudio(piece, voice, abortRef.current?.signal);
+      if (token !== gen.current) return;
+      speedAppliedRef.current = speedApplied;
+      if (loadedKey.current !== key) {
+        audio.src = url;
+        loadedKey.current = key;
+      }
+      audio.playbackRate = speedApplied ? 1 : useLane.getState().speed;
+      await audio.play();
+      if (token !== gen.current) {
+        audio.pause();
+        return;
+      }
+      setProgress((i + (audio.currentTime && audio.duration ? audio.currentTime / audio.duration : 0)) / pieces.length);
+      await waitForAudioEnd(token);
+    }
+  }
+
   async function playAt(nextIndex: number) {
     const state = useLane.getState();
     const nextCard = state.cards[nextIndex];
@@ -345,6 +444,7 @@ export function LaneApp() {
       return;
     }
     const token = ++gen.current;
+    endedWaiter.current = null;
     stopDevice();
     state.setIndex(nextIndex);
     const voice = voiceForCard(nextIndex, state.voiceId, state.rotate);
@@ -352,6 +452,8 @@ export function LaneApp() {
     setError(null);
     setNote(null);
     setAuditionId(null);
+    setPieceIndex(0);
+    setPieceCount(1);
     modeRef.current = "lane";
 
     const markPlaying = () => {
@@ -359,7 +461,6 @@ export function LaneApp() {
       setPhase("playing");
       void holdScreen();
       publishSession(nextCard.text, voice.name, true);
-      prefetchAhead(nextIndex);
     };
 
     try {
@@ -373,26 +474,42 @@ export function LaneApp() {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
-      const { key, url } = await ensureAudio(nextCard.text, voice.id, ac.signal);
+      const pieces = splitSpeakable(nextCard.text);
+      if (pieces.length === 0) {
+        setPhase("idle");
+        return;
+      }
+      const first = await ensureAudio(pieces[0]!, voice.id, ac.signal);
       if (token !== gen.current) return;
       const audio = audioRef.current;
       if (!audio) return;
-      if (loadedKey.current !== key) {
-        audio.src = url;
-        loadedKey.current = key;
-      }
-      audio.playbackRate = useLane.getState().speed;
+      speedAppliedRef.current = first.speedApplied;
+      audio.src = first.url;
+      loadedKey.current = first.key;
+      audio.playbackRate = first.speedApplied ? 1 : useLane.getState().speed;
+      if (pieces[1]) prefetchSentence(pieces[1], voice.id);
+      else prefetchAhead(nextIndex);
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
         return;
       }
       markPlaying();
-      setProgress(audio.currentTime && audio.duration ? audio.currentTime / audio.duration : 0);
+      setPieceCount(pieces.length);
+      setPieceIndex(0);
+      await waitForAudioEnd(token);
+      if (token !== gen.current || modeRef.current !== "lane") return;
+      if (pieces.length > 1) {
+        await playGeneratedPieces(pieces, voice.id, token, 1);
+      }
+      if (token !== gen.current || modeRef.current !== "lane") return;
+      advanceRef.current(nextIndex);
     } catch (err) {
       if (isAbort(err) || token !== gen.current) return;
       if (voice.id !== "device") {
-        setNote("That voice wasn't available, so this card is using the device voice.");
+        setNote(
+          "Generated audio was not available, so this card is using the browser's device voice. Leo, Eve and the others will sound the same until VoiceStudio is running or an xAI key is set.",
+        );
         try {
           markPlaying();
           await playDevice(nextCard.text, token, useLane.getState().speed);
@@ -414,6 +531,8 @@ export function LaneApp() {
 
   function pause() {
     gen.current += 1;
+    endedWaiter.current?.(false);
+    endedWaiter.current = null;
     abortRef.current?.abort();
     stopDevice();
     audioRef.current?.pause();
@@ -435,16 +554,19 @@ export function LaneApp() {
     }
     const current = state.cards[state.index];
     const voice = current ? voiceForCard(state.index, state.voiceId, state.rotate) : null;
-    const key = current && voice ? `${voice.id}\0${current.text}` : null;
+    const key = current && voice
+      ? audioCacheKey(voice.id, splitSpeakable(current.text)[0] ?? current.text, state.ttsModel, state.speed)
+      : null;
     const audio = audioRef.current;
     if (
       phaseRef.current === "paused" &&
       audio &&
       key &&
       loadedKey.current === key &&
-      playingId.current === current?.id
+      playingId.current === current?.id &&
+      !audio.ended
     ) {
-      audio.playbackRate = state.speed;
+      audio.playbackRate = speedAppliedRef.current ? 1 : state.speed;
       void audio.play().then(() => {
         setPhase("playing");
         void holdScreen();
@@ -487,6 +609,7 @@ export function LaneApp() {
   async function audition(voice: Voice) {
     if (phaseRef.current === "playing" || phaseRef.current === "loading") pause();
     const token = ++gen.current;
+    endedWaiter.current = null;
     setAuditionId(voice.id);
     setError(null);
     setNote(null);
@@ -500,20 +623,23 @@ export function LaneApp() {
         return;
       }
       const line = `This is ${voice.name}. I'll read the next post.`;
-      const { url } = await ensureAudio(line, voice.id);
+      const { url, speedApplied, key } = await ensureAudio(line, voice.id);
       if (token !== gen.current) return;
       const audio = audioRef.current;
       if (!audio) return;
+      speedAppliedRef.current = speedApplied;
       audio.src = url;
-      loadedKey.current = null;
+      loadedKey.current = key;
       playingId.current = null;
-      audio.playbackRate = 1;
+      audio.playbackRate = speedApplied ? 1 : 1;
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
         return;
       }
       setPhase("playing");
+      await waitForAudioEnd(token);
+      if (token === gen.current) setPhase("idle");
     } catch (err) {
       if (isAbort(err) || token !== gen.current) return;
       setPhase("paused");
@@ -601,7 +727,13 @@ export function LaneApp() {
     setDownloadingId(item.id);
     setError(null);
     try {
-      const { url } = await ensureAudio(item.text, voice.id);
+      const pieces = splitSpeakable(item.text);
+      const first = pieces[0] ?? item.text;
+      const source = item.text.length <= 4096 ? item.text : first;
+      const { url } = await ensureAudio(source, voice.id);
+      if (source !== item.text) {
+        setNote("This card is longer than the voice service allows in one file, so the download is the opening sentences. Play the card to hear the rest.");
+      }
       saveFile(url, `natural-reader-${String(cardIndex + 1).padStart(2, "0")}-${voice.name.toLowerCase()}.mp3`);
     } catch (err) {
       if (!isAbort(err)) setError(err instanceof Error ? err.message : "Could not download that card.");
@@ -769,6 +901,11 @@ export function LaneApp() {
             </div>
           )}
 
+          {ttsStatus && !note ? (
+            <p className="mt-3 text-sm text-muted" role="status">
+              {ttsStatus.message}
+            </p>
+          ) : null}
           {error ? (
             <p className="mt-4 text-sm text-danger" role="alert">
               {error}
@@ -811,14 +948,35 @@ export function LaneApp() {
         </div>
 
         <p className="text-xs leading-relaxed text-muted">
-          Set the queue before you need your hands. Play and download sit above and below a long read.
-          The next card is prepared while the current one finishes. Skip works from the lock screen once playback starts.
+          Generated voices come from local VoiceStudio when it is running on port 3900, then from xAI if a key is set.
+          Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready.
         </p>
       </section>
 
       <aside className="flex min-w-0 flex-col gap-6 border-line px-4 py-6 pb-safe sm:px-6 lg:col-span-2 lg:max-h-dvh lg:overflow-y-auto lg:border-l lg:px-5 lg:py-8">
         <div>
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="mb-3 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Engine</h2>
+              <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Local voice engine">
+                {TTS_MODELS.map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => setTtsModel(model.id)}
+                    aria-pressed={ttsModel === model.id}
+                    title={model.note}
+                    className={
+                      "min-h-11 rounded-full px-3 text-xs font-semibold " +
+                      (ttsModel === model.id ? "bg-amber text-ink" : "text-muted")
+                    }
+                  >
+                    {model.id === "omnivoice" ? "Best local" : "Fast local"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Voices</h2>
             <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Voice mode">
               <button
@@ -843,6 +1001,7 @@ export function LaneApp() {
               >
                 Switch each post
               </button>
+            </div>
             </div>
           </div>
           <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">

@@ -9,8 +9,10 @@ browser.
 
 - Node.js 22 or newer
 - npm
-- An `XAI_API_KEY` to generate and download audio with the xAI text-to-speech
-  service. Without it, generated voice audio is unavailable.
+- Optional: a local VoiceStudio API on `http://127.0.0.1:3900` (preferred for
+  generated voices)
+- Optional: an `XAI_API_KEY` in the server environment as a cloud fallback.
+  Without VoiceStudio or that key, the app uses this browser's device voice.
 
 ## Run locally
 
@@ -20,9 +22,33 @@ npm run dev
 ```
 
 Open `http://localhost:8080`. The app's checked-in workspace config keeps
-authentication disabled for local development. Set `XAI_API_KEY` in the
-server's environment to enable generated audio; never expose it through a
-`VITE_`-prefixed variable.
+authentication disabled for local development. Never expose secrets through a
+`VITE_`-prefixed variable. `scripts/with-app-env.mjs` only loads `VITE_` flags
+from `.grok/app-env.json`; it does not load API keys.
+
+## Local voices (VoiceStudio)
+
+The reader prefers a local VoiceStudio server and speaks sentence by sentence
+so playback can start before a whole card is ready. If VoiceStudio is down, it
+falls back to xAI when `XAI_API_KEY` is set, then to this browser's device
+voice.
+
+Start VoiceStudio's API, then the reader:
+
+```sh
+cd ~/Dev/Source/VoiceStudio
+bun run dev:api
+```
+
+In another terminal:
+
+```sh
+cd ~/Dev/Source/Natural-Voice-Reader
+npm run dev
+```
+
+Open `http://localhost:8080`. Choose **Best local** (OmniVoice) or **Fast local**
+(KittenTTS). Keep VoiceStudio running while you listen.
 
 ## Useful commands
 

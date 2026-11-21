@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { cardsFromPage, cardsFromPaste, type Card } from "@/lib/chunk-text";
 import { defaultInk, type ThemeName } from "@/lib/appearance";
 import { SAMPLE_LANE } from "@/lib/samples";
+import { DEFAULT_VOICESTUDIO_MODEL, isTtsModelId, type TtsModelId } from "@/lib/tts-config";
 
 export const SPEED_OPTIONS = [
   { value: 0.9, label: "Slow" },
@@ -17,6 +18,7 @@ type LaneState = {
   index: number;
   voiceId: string;
   rotate: boolean;
+  ttsModel: TtsModelId;
   speed: Speed;
   repeat: boolean;
   theme: ThemeName;
@@ -24,6 +26,7 @@ type LaneState = {
   seeded: boolean;
   setVoice: (id: string) => void;
   setRotate: (rotate: boolean) => void;
+  setTtsModel: (model: TtsModelId) => void;
   setSpeed: (speed: Speed) => void;
   setRepeat: (repeat: boolean) => void;
   setTheme: (theme: ThemeName) => void;
@@ -59,7 +62,8 @@ export const useLane = create<LaneState>()(
       cards: cardsFromPaste(SAMPLE_LANE),
       index: 0,
       voiceId: "leo",
-      rotate: true,
+      rotate: false,
+      ttsModel: DEFAULT_VOICESTUDIO_MODEL,
       speed: 1,
       repeat: false,
       theme: "dark",
@@ -67,6 +71,7 @@ export const useLane = create<LaneState>()(
       seeded: true,
       setVoice: (voiceId) => set({ voiceId }),
       setRotate: (rotate) => set({ rotate }),
+      setTtsModel: (ttsModel) => set({ ttsModel: isTtsModelId(ttsModel) ? ttsModel : DEFAULT_VOICESTUDIO_MODEL }),
       setSpeed: (speed) => set({ speed }),
       setRepeat: (repeat) => set({ repeat }),
       setTheme: (theme) => set({ theme }),
@@ -99,6 +104,7 @@ export const useLane = create<LaneState>()(
         index: s.index,
         voiceId: s.voiceId,
         rotate: s.rotate,
+        ttsModel: isTtsModelId(s.ttsModel) ? s.ttsModel : DEFAULT_VOICESTUDIO_MODEL,
         speed: s.speed,
         repeat: s.repeat,
         theme: s.theme,
