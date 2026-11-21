@@ -3,16 +3,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createServerFn } from "@tanstack/react-start";
-import {
-  isPackId,
-  listPackStatus,
-  packById,
-  readProgress,
-  repoRoot,
-  statusFilePath,
-  type CatalogIssue,
-  type VoicePackStatus,
-} from "./voice-packs.ts";
+import { isPackId, packById, type CatalogIssue, type VoicePackStatus } from "./voice-packs.ts";
+import { listPackStatus, loadMergedCatalog, readProgress, repoRoot, statusFilePath } from "./voice-packs.server.ts";
 
 export type VoicePackListResult = {
   packs: VoicePackStatus[];
@@ -72,7 +64,7 @@ function assertKnownPack(id: unknown): string {
   if (!isPackId(id)) {
     throw new Error("That is not a valid voice pack id.");
   }
-  if (!packById(id)) {
+  if (!packById(id, loadMergedCatalog().packs)) {
     throw new Error("Unknown voice pack. Only catalog and overlay ids can be installed.");
   }
   return id;

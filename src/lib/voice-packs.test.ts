@@ -6,17 +6,19 @@ import { join } from "node:path";
 import {
   assertSafeRelativeName,
   isPackId,
+  mergeCatalogs,
+  packById,
+  parseCatalog,
+  type VoicePack,
+} from "./voice-packs.ts";
+import {
   loadOfficialCatalog,
   markInstalled,
   markRemoved,
-  mergeCatalogs,
-  packById,
   packFilesPresent,
-  parseCatalog,
   readInstallState,
   writeInstallState,
-  type VoicePack,
-} from "./voice-packs.ts";
+} from "./voice-packs.server.ts";
 
 function officialPacks(): VoicePack[] {
   const { packs, errors } = loadOfficialCatalog();
