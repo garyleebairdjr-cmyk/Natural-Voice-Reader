@@ -366,7 +366,7 @@ start_kokoro() {
     -H "Content-Type: application/json" \
     -d '{"model":"kokoro","input":"The voice engine is ready.","voice":"bm_george","speed":1}' \
     -o /tmp/nvr-kokoro-warmup.wav && [[ "$(wc -c < /tmp/nvr-kokoro-warmup.wav)" -gt 64 ]]; then
-    log "Kokoro is ready (Butler / accented English voices)."
+    log "Kokoro is ready (Butler and Indian English voices)."
   else
     log "Kokoro is up but the warm-up clip was empty. See ${KOKORO_LOG}."
   fi
@@ -375,7 +375,7 @@ start_kokoro() {
 ensure_model_weights || true
 ensure_named_weights "kokoro" "Kokoro" || true
 if ! start_kokoro; then
-  log "Continuing without Kokoro. Butler and the Indian/Japanese English voices will be unavailable until it starts."
+  log "Continuing without Kokoro. Butler and the Indian English voices will be unavailable until it starts."
 fi
 
 nvr_write_status "${STATUS_FILE}" "{\"state\":\"warming\",\"model\":\"${MODEL}\",\"message\":\"Loading voice engine. The first load can take a minute on this computer.\"}"

@@ -4,6 +4,8 @@
  * Only TTS is wired today. STT and translation are typed here so a later
  * multilingual / on-device path can slot in without rewriting the queue UI.
  * Language tags are BCP-47 (for example "en", "es", "hi").
+ * A later German-accented English voice should use a native-German speaker
+ * model; style-prompted English sounded American and is not shipped.
  */
 
 export type LanguageCode = string;

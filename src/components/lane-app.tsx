@@ -375,13 +375,11 @@ export function LaneApp() {
     const url = b64ToUrl(result.audio, result.mime);
     remember(key, { url, speedApplied: result.speedApplied });
     if (result.provider === "voicestudio" || result.provider === "xai" || result.provider === "kokoro") {
-      const message = result.slow
-        ? "Using local OmniVoice for German-accented English. This voice is slower, often around a minute for a short paragraph."
-        : result.provider === "kokoro"
-          ? "Using local Kokoro for this voice."
-          : result.provider === "voicestudio"
-            ? `Using local VoiceStudio (${modelLabel(result.model)}).`
-            : "VoiceStudio is not running. Using the xAI cloud voice.";
+      const message = result.provider === "kokoro"
+        ? "Using local Kokoro for this voice."
+        : result.provider === "voicestudio"
+          ? `Using local VoiceStudio (${modelLabel(result.model)}).`
+          : "VoiceStudio is not running. Using the xAI cloud voice.";
       setTtsStatus((current) => ({
         provider: result.provider,
         model: result.model,
@@ -1100,8 +1098,8 @@ export function LaneApp() {
         </div>
 
         <p className="text-xs leading-relaxed text-muted">
-          Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian and Japanese English voices, then from xAI if a key is set.
-          German English voices use OmniVoice and are slower. Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready.
+          Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian English voices, then from xAI if a key is set.
+          Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready.
         </p>
       </section>
 

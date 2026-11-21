@@ -37,34 +37,6 @@ const SPECIAL_VOICES: Voice[] = [
     language: "en-IN",
     accent: "indian",
   },
-  {
-    id: "aiko",
-    name: "Aiko (Japanese English)",
-    note: "Gentle, natural Japanese-accented English.",
-    language: "en",
-    accent: "japanese",
-  },
-  {
-    id: "haru",
-    name: "Haru (Japanese English)",
-    note: "Even, natural Japanese-accented English.",
-    language: "en",
-    accent: "japanese",
-  },
-  {
-    id: "lena",
-    name: "Lena (German English)",
-    note: "Mild German-accented English. Slower engine.",
-    language: "en",
-    accent: "german",
-  },
-  {
-    id: "jonas",
-    name: "Jonas (German English)",
-    note: "Mild German-accented English. Slower engine.",
-    language: "en",
-    accent: "german",
-  },
 ];
 
 /** Curated voices. Leo is the default. Device is the browser fallback. */
@@ -89,20 +61,32 @@ export const VOICES: Voice[] = [
 ];
 
 const IDS = new Set(VOICES.map((v) => v.id));
-const FALLBACK = VOICES.find((v) => v.id === "leo") ?? VOICES[0];
+export const DEFAULT_VOICE_ID = "leo";
+const FALLBACK = VOICES.find((v) => v.id === DEFAULT_VOICE_ID) ?? VOICES[0];
+
+/** Voices that used to be in the picker and must fall back to the default. */
+export const REMOVED_VOICE_IDS = ["aiko", "haru", "lena", "jonas"] as const;
 
 export function isVoiceId(id: string): boolean {
   return IDS.has(id);
 }
 
+/** Map a saved or requested voice onto one that still exists. */
+export function canonicalVoiceId(id: unknown): string {
+  if (id === DEVICE_VOICE.id) return DEVICE_VOICE.id;
+  if (typeof id === "string" && isVoiceId(id)) return id;
+  return DEFAULT_VOICE_ID;
+}
+
 export function voiceById(id: string): Voice {
   if (id === DEVICE_VOICE.id) return DEVICE_VOICE;
-  return VOICES.find((v) => v.id === id) ?? FALLBACK;
+  return VOICES.find((v) => v.id === canonicalVoiceId(id)) ?? FALLBACK;
 }
 
 export function voiceForCard(index: number, voiceId: string, rotate: boolean): Voice {
-  if (voiceId === DEVICE_VOICE.id) return DEVICE_VOICE;
-  const start = Math.max(0, VOICES.findIndex((v) => v.id === voiceId));
+  const id = canonicalVoiceId(voiceId);
+  if (id === DEVICE_VOICE.id) return DEVICE_VOICE;
+  const start = Math.max(0, VOICES.findIndex((v) => v.id === id));
   if (!rotate) return VOICES[start] ?? FALLBACK;
   return VOICES[(start + index) % VOICES.length] ?? FALLBACK;
 }

@@ -136,11 +136,11 @@ if ((Test-Path $VsPython) -and (Test-Path $Downloader)) {
         if ($DryRun) { Write-Plan "Download OmniVoice into the Hugging Face cache." }
         else { & $VsPython $Downloader --model omnivoice --status-file $StatusFile }
     } else {
-        Write-Skip "OmniVoice is on demand. Re-run with -WithOmniVoice or choose Best quality (slow) later. German English voices need it."
+        Write-Skip "OmniVoice is on demand. Re-run with -WithOmniVoice or choose Best quality (slow) later."
     }
 }
 
-Write-Log "Checking Kokoro weights (Butler and accented English)..."
+Write-Log "Checking Kokoro weights (Butler and Indian English)..."
 if ((Test-Path $VsPython) -and (Test-Path $Downloader)) {
     & $VsPython $Downloader --model kokoro --check
     if ($LASTEXITCODE -eq 0) {

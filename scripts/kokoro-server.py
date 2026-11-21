@@ -17,18 +17,13 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# Official kokoro-multi-lang-v1_0 speaker ids (hexgrad/Kokoro-82M).
+# Official kokoro-multi-lang-v1_0 speaker ids used by the reader.
+# The on-disk pack still contains the full 54-speaker table; trimming
+# voices.bin is unsafe without regenerating model metadata.
 VOICES = {
     "bm_george": 26,
-    "bm_lewis": 27,
-    "bm_daniel": 24,
-    "bm_fable": 25,
     "hf_alpha": 31,
-    "hf_beta": 32,
     "hm_omega": 33,
-    "hm_psi": 34,
-    "jf_alpha": 37,
-    "jm_kumo": 41,
 }
 
 DEFAULT_CACHE = Path.home() / ".cache" / "nvr" / "sherpa" / "kokoro-int8-multi-lang-v1_0"
@@ -46,9 +41,9 @@ def model_paths(root: Path) -> dict[str, str]:
     data_dir = root / "espeak-ng-data"
     gb = root / "lexicon-gb-en.txt"
     us = root / "lexicon-us-en.txt"
-    zh = root / "lexicon-zh.txt"
+    # English only: Butler uses the GB lexicon. Do not load the Chinese lexicon.
     lex_en = gb if gb.is_file() else us
-    lexicon_parts = [str(p) for p in (lex_en, zh) if p.is_file()]
+    lexicon_parts = [str(lex_en)] if lex_en.is_file() else []
     if not model.is_file() or not voices.is_file() or not tokens.is_file():
         raise FileNotFoundError(f"Kokoro model files are missing in {root}")
     return {

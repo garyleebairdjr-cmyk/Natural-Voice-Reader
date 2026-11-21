@@ -496,16 +496,6 @@ export const synthesizeSpeech = createServerFn({ method: "POST" })
     if (health.up || health.loading) {
       const local = await speakVoiceStudio(routed, !engineWarmed || health.loading || route.slow);
       if (local.ok) return { ...local, slow: route.slow };
-      // Specialty voices (German English) must keep their engine; do not swap in xAI.
-      if (route.instruct) {
-        if (!local.ok && /not available|could not reach|not running/i.test(local.error)) {
-          return {
-            ok: false,
-            error: "This German English voice needs OmniVoice. Install it with ./scripts/install.sh --with-omnivoice, then try again.",
-          };
-        }
-        return local;
-      }
       if (xaiConfigured() && !local.loading) {
         const cloud = await speakXai(input);
         if (cloud.ok) return cloud;
@@ -513,12 +503,6 @@ export const synthesizeSpeech = createServerFn({ method: "POST" })
       return local;
     }
 
-    if (route.instruct) {
-      return {
-        ok: false,
-        error: "This German English voice needs local OmniVoice. Start the reader with nvr, and install OmniVoice with ./scripts/install.sh --with-omnivoice if it is missing.",
-      };
-    }
     if (xaiConfigured()) return speakXai(input);
     return { ok: false, error: "Voice is not available in this environment." };
   });

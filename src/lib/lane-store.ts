@@ -4,6 +4,7 @@ import { cardsFromPage, cardsFromPaste, type Card } from "@/lib/chunk-text";
 import { defaultInk, type ThemeName } from "@/lib/appearance";
 import { SAMPLE_LANE } from "@/lib/samples";
 import { DEFAULT_VOICESTUDIO_MODEL, isTtsModelId, type TtsModelId } from "@/lib/tts-config";
+import { canonicalVoiceId } from "@/lib/voices";
 
 export const SPEED_OPTIONS = [
   { value: 0.9, label: "Slow" },
@@ -72,7 +73,7 @@ export const useLane = create<LaneState>()(
       theme: "dark",
       ink: defaultInk("dark"),
       seeded: true,
-      setVoice: (voiceId) => set({ voiceId }),
+      setVoice: (voiceId) => set({ voiceId: canonicalVoiceId(voiceId) }),
       setRotate: (rotate) => set({ rotate }),
       setTtsModel: (ttsModel) => set({ ttsModel: isTtsModelId(ttsModel) ? ttsModel : DEFAULT_VOICESTUDIO_MODEL }),
       setSoftRoom: (softRoom) => set({ softRoom }),
@@ -103,7 +104,7 @@ export const useLane = create<LaneState>()(
     {
       name: "lane-reader",
       skipHydration: true,
-      version: 3,
+      version: 4,
       migrate: (persisted, version) => {
         const state = persisted as Record<string, unknown>;
         let next = state;
@@ -113,12 +114,15 @@ export const useLane = create<LaneState>()(
         if (version < 3) {
           next = { ...next, softRoom: false };
         }
+        if (version < 4) {
+          next = { ...next, voiceId: canonicalVoiceId(next.voiceId) };
+        }
         return next;
       },
       partialize: (s) => ({
         cards: s.cards,
         index: s.index,
-        voiceId: s.voiceId,
+        voiceId: canonicalVoiceId(s.voiceId),
         rotate: s.rotate,
         ttsModel: isTtsModelId(s.ttsModel) ? s.ttsModel : DEFAULT_VOICESTUDIO_MODEL,
         softRoom: Boolean(s.softRoom),

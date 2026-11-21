@@ -11,7 +11,7 @@ browser.
 - npm
 - Optional: a local VoiceStudio API on `http://127.0.0.1:3900` (preferred for
   generated voices) and a local Kokoro helper on `http://127.0.0.1:3901` for
-  Butler and the accented English voices
+  Butler and the Indian English voices
 - Optional: an `XAI_API_KEY` in the server environment as a cloud fallback.
   Without VoiceStudio or that key, the app uses this browser's device voice.
 
@@ -21,10 +21,10 @@ The script-based bootstrap checks for Node.js 22+, uv, Python 3.11, the
 reader's npm dependencies, and a pinned VoiceStudio checkout. Missing pieces
 are installed. KittenTTS weights download on demand from Hugging Face into
 the per-user cache, with progress shown in the reader UI. Kokoro (Apache-2.0)
-downloads by default into `~/.cache/nvr/sherpa` for Butler and the Indian and
-Japanese English voices. OmniVoice weights are larger and CC-BY-NC, so they
+downloads by default into `~/.cache/nvr/sherpa` for Butler (British) and the
+Indian English voices. OmniVoice weights are larger and CC-BY-NC, so they
 download only with `--with-omnivoice` or when you later choose **Best quality
-(slow)**. The German English voices need OmniVoice.
+(slow)**.
 
 Linux and macOS:
 
@@ -83,11 +83,10 @@ from `.grok/app-env.json`; it does not load API keys.
 
 The reader prefers a local VoiceStudio server and speaks sentence by sentence
 so playback can start before a whole card is ready. Butler (British) and the
-Indian and Japanese English voices use a small Kokoro helper on port 3901.
-German English voices use OmniVoice with a mild-accent instruction and are
-much slower. If VoiceStudio is down, the original KittenTTS/OmniVoice voices
-fall back to xAI when `XAI_API_KEY` is set, then to this browser's device
-voice. Specialty voices do not fall back, so the accent is not silently
+Indian English voices (Mira, Arjun) use a small Kokoro helper on port 3901.
+If VoiceStudio is down, the original KittenTTS/OmniVoice voices fall back to
+xAI when `XAI_API_KEY` is set, then to this browser's device voice. Butler and
+the Indian English voices do not fall back, so the accent is not silently
 replaced.
 
 `nvr` pins one exact VoiceStudio engine (`kittentts` by default, or
@@ -98,6 +97,15 @@ a minute; the reader shows "Loading voice engine" or a download percent
 instead of treating that wait as a failure. Never use `voxcpm2`. OmniVoice
 weights are CC-BY-NC (personal use only). A **Soft room** toggle adds a light
 playback-only room tone; downloads stay dry.
+
+## Roadmap
+
+The speech pipeline is already typed so later STT, translation, and smaller
+on-device models can slot in without rewriting the queue UI. A German-accented
+English voice is not shipped today: a style-prompted English model sounded
+American. That should wait for a native-German speaker model, not an overlay
+or caricature. Japanese English was also dropped from the picker after the
+available speakers sounded unnaturally high-pitched.
 
 ## Useful commands
 
