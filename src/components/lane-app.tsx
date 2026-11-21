@@ -33,6 +33,7 @@ import { listVoicePacks } from "@/lib/voice-packs.functions";
 import { voicesInInstalledPacks, type VoicePackStatus } from "@/lib/voice-packs";
 import { VoicePackSettings } from "@/components/voice-pack-settings";
 import { VoicePicker } from "@/components/voice-picker";
+import { useGoogleSession } from "@/components/google-session";
 import { VOICE_PREVIEW_LINE } from "@/lib/voice-picker";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
@@ -113,6 +114,7 @@ export function LaneApp() {
   const [auditionId, setAuditionId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const google = useGoogleSession();
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
   const [pieceIndex, setPieceIndex] = useState(0);
   const [pieceCount, setPieceCount] = useState(1);
@@ -1114,7 +1116,8 @@ export function LaneApp() {
       if (source !== item.text) {
         setNote("This card is longer than the voice service allows in one file, so the download is the opening sentences. Play the card to hear the rest.");
       }
-      saveFile(url, `natural-reader-${String(cardIndex + 1).padStart(2, "0")}-${voice.name.toLowerCase()}.mp3`);
+      const filename = `natural-reader-${String(cardIndex + 1).padStart(2, "0")}-${voice.name.toLowerCase()}.mp3`;
+      await google.api.finishDownload(url, filename);
     } catch (err) {
       if (!isAbort(err)) setError(err instanceof Error ? err.message : "Could not download that card.");
     } finally {
@@ -1351,12 +1354,12 @@ export function LaneApp() {
                 : ttsStatus.message}
             </p>
           ) : null}
-          {error ? (
+          {(error || google.error) ? (
             <p className="mt-4 text-sm text-danger" role="alert">
-              {error}
+              {error || google.error}
             </p>
           ) : null}
-          {note ? <p className="mt-3 text-sm text-muted">{note}</p> : null}
+          {(note || google.note) ? <p className="mt-3 text-sm text-muted">{note || google.note}</p> : null}
         </article>
 
         {transportBar("Bottom playback")}
@@ -1554,6 +1557,7 @@ export function LaneApp() {
             </>
           )}
           <div className="flex flex-wrap gap-2">
+            {google.addFromDriveButton}
             <button
               type="submit"
               disabled={reading}
@@ -1583,6 +1587,7 @@ export function LaneApp() {
             <PanelRightClose className="size-4" />
           </button>
         </div>
+        {google.accountCard}
         {packs ? <VoicePackSettings packs={packs} onChange={setPacks} /> : null}
         <div>
           <div className="mb-3 flex flex-col gap-3">
@@ -1641,6 +1646,7 @@ export function LaneApp() {
         </div>
       </aside>
       </div>
+      {google.dialogs}
       {confirmAction ? (
         <div className="nvr-dialog-root" role="presentation">
           <button type="button" className="nvr-dialog-backdrop" aria-label="Cancel" onClick={() => setConfirmAction(null)} />

@@ -207,6 +207,59 @@ overlay ids cannot replace an official pack. Supported source kinds today are
 include `piper` and other extensions; speaking a custom engine still needs a
 compatible local helper.
 
+
+## Google sign-in (optional)
+
+The reader works fully without an account. If you set a Google client ID, a
+**Sign in with Google** button appears in Settings. After you sign in, the app
+creates a `Natural Text Reader` folder in your Google Drive (with `Settings`
+and `Downloads` subfolders) and can:
+
+- Sync appearance, voice, speed, volume, favorites, recents, and panel state to
+  `Settings/settings.json` (no tokens or other secrets).
+- Open a Google Doc, `.txt`, or Markdown file with the Google Picker and add it
+  to the queue.
+- Optionally upload downloaded audio to `Downloads` when you turn on **Save
+  downloads to Google Drive** (off by default). A local file is still saved.
+
+Sign-out revokes the access token and clears Google state on this device.
+
+### Set up a Google Cloud client (personal account)
+
+Use a project on your own Google account. Do not reuse a work or client
+project. You can create a new project or use an existing personal one.
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and create or
+   select a project.
+2. Enable the **Google Drive API** and the **Google Picker API**.
+3. Configure the OAuth consent screen: User type **External**, publishing status
+   **Testing**, and add your Google account as a test user. The app only requests
+   `openid`, `email`, `profile`, and `https://www.googleapis.com/auth/drive.file`
+   (non-sensitive; verification is not required for testing).
+4. Create an OAuth **Web application** client ID. Under Authorized JavaScript
+   origins add `http://127.0.0.1:8080` and `http://localhost:8080`. You can leave
+   redirect URIs empty for this token-based sign-in.
+5. Create a Browser API key for the Picker. Restrict it to those same HTTP
+   referrers, and restrict the key to the Drive API and Picker API if asked.
+6. Copy `.env.example` to `.env` (never commit `.env`) and set:
+
+```
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_API_KEY=your-browser-api-key
+```
+
+7. Restart the reader (`nvr`). The Sign in button should appear in Settings.
+
+### Privacy
+
+Google sign-in is optional. Tokens are kept only in memory or session storage
+and are revoked on sign-out; they are never written to the repo or to logs.
+The `drive.file` scope lets the app use files it creates or that you pick in
+the Picker; it cannot see the rest of your Drive. Settings uploaded to Drive
+are the same kinds of preferences already stored in this browser (theme, voice,
+speed, volume, favorites, recents, and panel state), not passwords or API keys.
+Downloads are uploaded only if you turn that option on.
+
 ## Roadmap
 
 The speech pipeline is already typed so later STT, translation, and smaller
@@ -228,12 +281,11 @@ npm run build
 ## Notes
 
 - Text cards, playback preferences, and the reading queue are persisted in
-  browser storage; they are not synced between devices.
+  browser storage. If you sign in with Google, those preferences (not the
+  queue, and not any tokens) can also sync to the Natural Text Reader folder
+  in your Drive.
 - Reading a URL fetches its public page on the server. Some pages may block
   fetching or require a browser to render their content.
-- The project includes optional authentication and database infrastructure.
-  Enabling authentication outside the hosted preview requires the appropriate
-  OAuth client credentials, an auth URL, and a PostgreSQL `DATABASE_URL`.
 
 ## License
 
