@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { splitSpeakable, VOICESTUDIO_MAX_CHARS } from "./sentences.ts";
+import { splitForStreaming, splitLeadingClause, splitSpeakable, VOICESTUDIO_MAX_CHARS } from "./sentences.ts";
 
 describe("splitSpeakable", () => {
   it("returns an empty list for blank input", () => {
@@ -28,5 +28,33 @@ describe("splitSpeakable", () => {
     assert.ok(out.length >= 2);
     assert.ok(out.every((part) => part.length <= VOICESTUDIO_MAX_CHARS));
     assert.equal(out.join(" ").replace(/\s+/g, " "), long);
+  });
+});
+
+describe("splitLeadingClause", () => {
+  it("keeps a short or unpunctuated sentence intact", () => {
+    assert.deepEqual(splitLeadingClause("Voyager 1 is now in interstellar space."), [
+      "Voyager 1 is now in interstellar space.",
+    ]);
+    assert.deepEqual(splitLeadingClause("Hello, pal."), ["Hello, pal."]);
+  });
+
+  it("splits a long first sentence at the first clause", () => {
+    const text = "The signal is faint, but it is still arriving on Earth this week.";
+    const out = splitLeadingClause(text);
+    assert.deepEqual(out, ["The signal is faint,", "but it is still arriving on Earth this week."]);
+  });
+});
+
+describe("splitForStreaming", () => {
+  it("clause-splits only the first sentence of a card", () => {
+    const text =
+      "The signal is faint, but it is still arriving on Earth this week. The next packet will take a day.";
+    const out = splitForStreaming(text);
+    assert.deepEqual(out, [
+      "The signal is faint,",
+      "but it is still arriving on Earth this week.",
+      "The next packet will take a day.",
+    ]);
   });
 });

@@ -19,14 +19,16 @@ import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
 import { SPEED_OPTIONS, useLane } from "@/lib/lane-store";
 import { DEVICE_VOICE, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
-import { splitSpeakable } from "@/lib/sentences";
+import { splitForStreaming } from "@/lib/sentences";
 import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
 type CachedClip = { url: string; speedApplied: boolean };
+type PreparedClip = { key: string; url: string; speedApplied: boolean; provider: "cache" | "voicestudio" | "xai" };
 const audioCache = new Map<string, CachedClip>();
 const cacheOrder: string[] = [];
+const inflightAudio = new Map<string, Promise<PreparedClip>>();
 
 function remember(key: string, clip: CachedClip) {
   if (audioCache.has(key)) return;
@@ -94,7 +96,7 @@ export function LaneApp() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const gen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  const prefetchAbort = useRef<AbortController | null>(null);
+  const prefetchAbort = useRef<AbortController[]>([]);
   const deviceKeep = useRef<number | null>(null);
   const loadedKey = useRef<string | null>(null);
   const playingId = useRef<string | null>(null);
@@ -199,6 +201,22 @@ export function LaneApp() {
   }, [ttsModel]);
 
   useEffect(() => {
+    if (ttsStatus?.state !== "loading" && ttsStatus?.state !== "downloading") return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getTtsStatus()
+        .then((status) => {
+          if (!cancelled) setTtsStatus(status);
+        })
+        .catch(() => {});
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [ttsStatus?.state]);
+
+  useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === "visible" && phaseRef.current === "playing") {
         void holdScreen();
@@ -293,6 +311,23 @@ export function LaneApp() {
     const key = audioCacheKey(voice, text, model, speed);
     const hit = audioCache.get(key);
     if (hit) return { key, url: hit.url, speedApplied: hit.speedApplied, provider: "cache" as const };
+    const pending = inflightAudio.get(key);
+    if (pending) return pending;
+    const work = loadAudio(key, text, voice, model, speed, signal).finally(() => {
+      inflightAudio.delete(key);
+    });
+    inflightAudio.set(key, work);
+    return work;
+  }
+
+  async function loadAudio(
+    key: string,
+    text: string,
+    voice: string,
+    model: string,
+    speed: number,
+    signal?: AbortSignal,
+  ) {
     const request = () => synthesizeSpeech({ data: { text, voiceId: voice, speed, model }, signal });
     let result = await request();
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -345,24 +380,40 @@ export function LaneApp() {
     return { key, url, speedApplied: result.speedApplied, provider: result.provider };
   }
 
+  function abortPrefetch() {
+    for (const ac of prefetchAbort.current) ac.abort();
+    prefetchAbort.current = [];
+  }
+
   function prefetchSentence(text: string, voice: string) {
     const state = useLane.getState();
     if (state.voiceId === "device") return;
     const key = audioCacheKey(voice, text, state.ttsModel, state.speed);
-    if (audioCache.has(key)) return;
-    prefetchAbort.current?.abort();
+    if (audioCache.has(key) || inflightAudio.has(key)) return;
     const ac = new AbortController();
-    prefetchAbort.current = ac;
+    prefetchAbort.current.push(ac);
     void ensureAudio(text, voice, ac.signal).catch(() => {});
   }
 
-  function prefetchAhead(fromIndex: number) {
-    const state = useLane.getState();
-    const nextCard = state.cards[fromIndex + 1];
-    if (!nextCard || state.voiceId === "device") return;
-    const voice = voiceForCard(fromIndex + 1, state.voiceId, state.rotate);
-    const first = splitSpeakable(nextCard.text)[0] ?? nextCard.text;
-    prefetchSentence(first, voice.id);
+  function prefetchUpcoming(pieces: string[], fromPiece: number, cardIndex: number, voice: string) {
+    const upcoming = pieces.slice(fromPiece + 1, fromPiece + 3);
+    if (upcoming.length < 2) {
+      const state = useLane.getState();
+      const nextCard = state.cards[cardIndex + 1];
+      if (nextCard && state.voiceId !== "device") {
+        const nextVoice = voiceForCard(cardIndex + 1, state.voiceId, state.rotate);
+        const nextPieces = splitForStreaming(nextCard.text);
+        const need = 2 - upcoming.length;
+        // Next card may use a different voice when rotation is on.
+        if (nextVoice.id === voice) upcoming.push(...nextPieces.slice(0, need));
+        else {
+          for (const piece of upcoming) prefetchSentence(piece, voice);
+          for (const piece of nextPieces.slice(0, need)) prefetchSentence(piece, nextVoice.id);
+          return;
+        }
+      }
+    }
+    for (const piece of upcoming) prefetchSentence(piece, voice);
   }
 
   function waitForAudioEnd(token: number): Promise<void> {
@@ -463,9 +514,7 @@ export function LaneApp() {
       if (token !== gen.current || modeRef.current !== "lane") return;
       setPieceIndex(i);
       const piece = pieces[i]!;
-      const nextPiece = pieces[i + 1];
-      if (nextPiece) prefetchSentence(nextPiece, voice);
-      else prefetchAhead(useLane.getState().index);
+      prefetchUpcoming(pieces, i, useLane.getState().index, voice);
       const { key, url, speedApplied } = await ensureAudio(piece, voice, abortRef.current?.signal);
       if (token !== gen.current) return;
       speedAppliedRef.current = speedApplied;
@@ -522,7 +571,7 @@ export function LaneApp() {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
-      const pieces = splitSpeakable(nextCard.text);
+      const pieces = splitForStreaming(nextCard.text);
       if (pieces.length === 0) {
         setPhase("idle");
         return;
@@ -535,8 +584,7 @@ export function LaneApp() {
       audio.src = first.url;
       loadedKey.current = first.key;
       audio.playbackRate = first.speedApplied ? 1 : useLane.getState().speed;
-      if (pieces[1]) prefetchSentence(pieces[1], voice.id);
-      else prefetchAhead(nextIndex);
+      prefetchUpcoming(pieces, 0, nextIndex, voice.id);
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
@@ -621,7 +669,7 @@ export function LaneApp() {
     const current = state.cards[state.index];
     const voice = current ? voiceForCard(state.index, state.voiceId, state.rotate) : null;
     const key = current && voice
-      ? audioCacheKey(voice.id, splitSpeakable(current.text)[0] ?? current.text, state.ttsModel, state.speed)
+      ? audioCacheKey(voice.id, splitForStreaming(current.text)[0] ?? current.text, state.ttsModel, state.speed)
       : null;
     const audio = audioRef.current;
     if (
@@ -724,7 +772,7 @@ export function LaneApp() {
   function stopForReplace() {
     gen.current += 1;
     abortRef.current?.abort();
-    prefetchAbort.current?.abort();
+    abortPrefetch();
     stopDevice();
     audioRef.current?.pause();
     loadedKey.current = null;
@@ -793,7 +841,7 @@ export function LaneApp() {
     setDownloadingId(item.id);
     setError(null);
     try {
-      const pieces = splitSpeakable(item.text);
+      const pieces = splitForStreaming(item.text);
       const first = pieces[0] ?? item.text;
       const source = item.text.length <= 4096 ? item.text : first;
       const { url } = await ensureAudio(source, voice.id);
@@ -968,8 +1016,16 @@ export function LaneApp() {
           )}
 
           {ttsStatus && !note ? (
-            <p className={"mt-3 text-sm " + (ttsStatus.state === "loading" ? "text-fg" : "text-muted")} role="status">
-              {ttsStatus.message}
+            <p
+              className={
+                "mt-3 text-sm " +
+                (ttsStatus.state === "loading" || ttsStatus.state === "downloading" ? "text-fg" : "text-muted")
+              }
+              role="status"
+            >
+              {ttsStatus.download?.percent != null
+                ? `${ttsStatus.message} (${Math.round(ttsStatus.download.percent)}%)`
+                : ttsStatus.message}
             </p>
           ) : null}
           {error ? (
@@ -1037,7 +1093,7 @@ export function LaneApp() {
                       (ttsModel === model.id ? "bg-amber text-ink" : "text-muted")
                     }
                   >
-                    {model.id === "omnivoice" ? "Best local" : "Fast local"}
+                    {model.label}
                   </button>
                 ))}
               </div>

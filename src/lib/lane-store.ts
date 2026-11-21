@@ -99,6 +99,14 @@ export const useLane = create<LaneState>()(
     {
       name: "lane-reader",
       skipHydration: true,
+      version: 2,
+      migrate: (persisted, version) => {
+        const state = persisted as Record<string, unknown>;
+        if (version < 2) {
+          return { ...state, ttsModel: DEFAULT_VOICESTUDIO_MODEL };
+        }
+        return state;
+      },
       partialize: (s) => ({
         cards: s.cards,
         index: s.index,

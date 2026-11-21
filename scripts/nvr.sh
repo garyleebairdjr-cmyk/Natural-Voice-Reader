@@ -2,25 +2,40 @@
 # Start VoiceStudio and Natural Voice Reader together, then stop both on Ctrl+C.
 set -euo pipefail
 
-NVR_ROOT="${NVR_ROOT:-$HOME/Dev/Source/Natural-Voice-Reader}"
-VS_ROOT="${VOICESTUDIO_ROOT:-$HOME/Dev/Source/VoiceStudio}"
+# Resolve the real script path so this works when invoked as ~/.local/bin/nvr.
+_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${_SOURCE}" ]]; do
+  _DIR="$(cd "$(dirname "${_SOURCE}")" && pwd)"
+  _SOURCE="$(readlink "${_SOURCE}")"
+  [[ "${_SOURCE}" != /* ]] && _SOURCE="${_DIR}/${_SOURCE}"
+done
+SCRIPT_DIR="$(cd "$(dirname "${_SOURCE}")" && pwd)"
+unset _SOURCE _DIR
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/nvr-lib.sh"
+nvr_load_pins "${SCRIPT_DIR}"
+
+NVR_ROOT="${NVR_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+VS_ROOT="$(nvr_default_vs_root)"
 VS_HOST="${VOICESTUDIO_HOST:-127.0.0.1}"
 VS_PORT="${VOICESTUDIO_PORT:-3900}"
 NVR_PORT="${NVR_PORT:-8080}"
 VS_URL="${VOICESTUDIO_URL:-http://${VS_HOST}:${VS_PORT}}"
 READER_URL="http://127.0.0.1:${NVR_PORT}"
-MODEL="${NVR_TTS_MODEL:-${VOICESTUDIO_TTS_MODEL:-omnivoice}}"
+MODEL="${NVR_TTS_MODEL:-${VOICESTUDIO_TTS_MODEL:-kittentts}}"
 VS_LOG="${VS_LOG:-/tmp/voicestudio-api.log}"
 NVR_LOG="${NVR_LOG:-/tmp/nvr-dev.log}"
+STATUS_FILE="$(nvr_default_status_file)"
 WARMUP_TEXT="The voice engine is ready."
+nvr_apply_thread_env
+log() {
+  printf '%s\n' "$*"
+}
+log "Using ${NVR_CPU_THREADS} CPU threads for Torch/ONNX (NVR_CPU_THREADS)."
 
 VS_PID=""
 NVR_PID=""
 CLEANING=0
-
-log() {
-  printf '%s\n' "$*"
-}
 
 die() {
   log "$*"
@@ -29,13 +44,13 @@ die() {
 
 case "${MODEL}" in
   voxcpm2|tts-1|tts-1-hd|gpt-4o-mini-tts)
-    log "Refusing model ${MODEL}; using omnivoice instead."
-    MODEL="omnivoice"
+    log "Refusing model ${MODEL}; using kittentts instead."
+    MODEL="kittentts"
     ;;
   omnivoice|kittentts) ;;
   *)
-    log "Unknown model ${MODEL}; using omnivoice instead."
-    MODEL="omnivoice"
+    log "Unknown model ${MODEL}; using kittentts instead."
+    MODEL="kittentts"
     ;;
 esac
 
@@ -198,6 +213,82 @@ done
 [[ "${health_ok}" -eq 1 ]] || die "Timed out waiting for VoiceStudio /health. See ${VS_LOG}."
 log "VoiceStudio is healthy."
 
+start_reader() {
+  if [[ -n "${NVR_PID}" ]]; then
+    return 0
+  fi
+  : > "${NVR_LOG}"
+  log "Starting the reader on ${READER_URL}..."
+  (
+    cd "${NVR_ROOT}"
+    export VOICESTUDIO_URL="${VS_URL}"
+    export VOICESTUDIO_TTS_MODEL="${MODEL}"
+    export NVR_TTS_MODEL="${MODEL}"
+    export NVR_STATUS_FILE="${STATUS_FILE}"
+    exec npm run dev
+  ) >>"${NVR_LOG}" 2>&1 &
+  NVR_PID=$!
+  log "Reader pid ${NVR_PID}. Log: ${NVR_LOG}"
+  reader_ok=0
+  for i in $(seq 1 60); do
+    if ! kill -0 "${NVR_PID}" 2>/dev/null; then
+      die "The reader exited before it started. See ${NVR_LOG}."
+    fi
+    if curl -fsS -m 5 "${READER_URL}" >/dev/null 2>&1; then
+      reader_ok=1
+      break
+    fi
+    sleep 0.5
+  done
+  [[ "${reader_ok}" -eq 1 ]] || die "Timed out waiting for the reader on port ${NVR_PORT}. See ${NVR_LOG}."
+  log "Reader is ready at ${READER_URL}"
+}
+
+open_browser() {
+  if [[ "${BROWSER_OPENED:-0}" -eq 1 ]]; then
+    return 0
+  fi
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "${READER_URL}" >/dev/null 2>&1 || true
+  elif command -v gio >/dev/null 2>&1; then
+    gio open "${READER_URL}" >/dev/null 2>&1 || true
+  elif command -v open >/dev/null 2>&1; then
+    open "${READER_URL}" >/dev/null 2>&1 || true
+  fi
+  BROWSER_OPENED=1
+  log "Opened ${READER_URL} in the browser."
+}
+
+ensure_model_weights() {
+  local py downloader
+  py="$(nvr_vs_python "${VS_ROOT}")"
+  downloader="${SCRIPT_DIR}/download-models.py"
+  if [[ -z "${py}" || ! -f "${downloader}" ]]; then
+    return 0
+  fi
+  if "${py}" "${downloader}" --model "${MODEL}" --check >/dev/null 2>&1; then
+    log "Voice model ${MODEL} is already in the cache."
+    return 0
+  fi
+  log "Voice model ${MODEL} is missing. Starting the reader so the UI stays usable while it downloads."
+  start_reader
+  open_browser
+  nvr_write_status "${STATUS_FILE}" "{\"state\":\"downloading\",\"model\":\"${MODEL}\",\"percent\":0,\"message\":\"Downloading the ${MODEL} voice model. You can keep using the reader.\"}"
+  if ! "${py}" "${downloader}" --model "${MODEL}" --status-file "${STATUS_FILE}"; then
+    log "Model download did not finish. The reader will keep trying when you press play."
+    return 1
+  fi
+  log "Voice model ${MODEL} is in the cache."
+}
+
+WARM_VOICE="default"
+if [[ "${MODEL}" == "kittentts" ]]; then
+  WARM_VOICE="expr-voice-2-m"
+fi
+
+ensure_model_weights || true
+
+nvr_write_status "${STATUS_FILE}" "{\"state\":\"warming\",\"model\":\"${MODEL}\",\"message\":\"Loading voice engine. The first load can take a minute on this computer.\"}"
 log "Pinning and warming ${MODEL}..."
 if ! curl -fsS -m 8 -X POST "${VS_URL}/engines/select" \
   -H "Content-Type: application/json" \
@@ -208,7 +299,7 @@ fi
 warm() {
   curl -fsS -m 180 -X POST "${VS_URL}/v1/audio/speech" \
     -H "Content-Type: application/json" \
-    -d "{\"model\":\"${MODEL}\",\"input\":\"${WARMUP_TEXT}\",\"voice\":\"default\",\"response_format\":\"mp3\",\"language\":\"en\",\"speed\":1}" \
+    -d "{\"model\":\"${MODEL}\",\"input\":\"${WARMUP_TEXT}\",\"voice\":\"${WARM_VOICE}\",\"response_format\":\"mp3\",\"language\":\"en\",\"speed\":1}" \
     -o /tmp/nvr-warmup.mp3
 }
 
@@ -223,39 +314,10 @@ else
     log "Warm-up did not finish. The reader will keep trying when you press play. See ${VS_LOG}."
   fi
 fi
+nvr_write_status "${STATUS_FILE}" "{\"state\":\"ready\",\"model\":\"${MODEL}\",\"percent\":100,\"message\":\"Using local VoiceStudio (${MODEL}).\"}"
 
-: > "${NVR_LOG}"
-log "Starting the reader on ${READER_URL}..."
-(
-  cd "${NVR_ROOT}"
-  export VOICESTUDIO_URL="${VS_URL}"
-  export VOICESTUDIO_TTS_MODEL="${MODEL}"
-  export NVR_TTS_MODEL="${MODEL}"
-  exec npm run dev
-) >>"${NVR_LOG}" 2>&1 &
-NVR_PID=$!
-log "Reader pid ${NVR_PID}. Log: ${NVR_LOG}"
-
-reader_ok=0
-for i in $(seq 1 60); do
-  if ! kill -0 "${NVR_PID}" 2>/dev/null; then
-    die "The reader exited before it started. See ${NVR_LOG}."
-  fi
-  if curl -fsS -m 5 "${READER_URL}" >/dev/null 2>&1; then
-    reader_ok=1
-    break
-  fi
-  sleep 0.5
-done
-[[ "${reader_ok}" -eq 1 ]] || die "Timed out waiting for the reader on port ${NVR_PORT}. See ${NVR_LOG}."
-log "Reader is ready at ${READER_URL}"
-
-if command -v xdg-open >/dev/null 2>&1; then
-  xdg-open "${READER_URL}" >/dev/null 2>&1 || true
-elif command -v gio >/dev/null 2>&1; then
-  gio open "${READER_URL}" >/dev/null 2>&1 || true
-fi
-log "Opened ${READER_URL} in the browser."
+start_reader
+open_browser
 log "Ready. Press Ctrl+C to stop both."
 
 while kill -0 "${VS_PID}" 2>/dev/null && kill -0 "${NVR_PID}" 2>/dev/null; do

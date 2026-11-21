@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { isVoiceId } from "@/lib/voices";
 import { splitSpeakable, VOICESTUDIO_MAX_CHARS } from "@/lib/sentences";
@@ -11,10 +14,47 @@ import {
   isForbiddenTtsModel,
   isTtsModelId,
   modelLabel,
+  type TtsDownloadProgress,
   type TtsStatus,
   voiceInstruction,
   voiceStudioVoice,
 } from "@/lib/tts-config";
+
+
+function bootstrapStatusPath(): string {
+  if (process.env.NVR_STATUS_FILE?.trim()) return process.env.NVR_STATUS_FILE.trim();
+  if (process.platform === "win32") {
+    const base = process.env.LOCALAPPDATA?.trim() || process.env.USERPROFILE?.trim() || homedir();
+    return join(base, "nvr", "status.json");
+  }
+  return join(homedir(), ".cache", "nvr", "status.json");
+}
+
+function readBootstrapStatus(): TtsDownloadProgress | null {
+  const path = bootstrapStatusPath();
+  if (!existsSync(path)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as {
+      state?: unknown;
+      model?: unknown;
+      percent?: unknown;
+      message?: unknown;
+    };
+    const state = typeof raw.state === "string" ? raw.state : "";
+    if (state !== "downloading" && state !== "warming") return null;
+    const percent = typeof raw.percent === "number" && Number.isFinite(raw.percent) ? Math.max(0, Math.min(100, raw.percent)) : null;
+    const model = typeof raw.model === "string" ? raw.model : null;
+    const message =
+      typeof raw.message === "string" && raw.message.trim()
+        ? raw.message.trim()
+        : state === "warming"
+          ? "Loading voice engine. The first load can take a minute on this computer."
+          : "Downloading the voice model. You can keep browsing the queue.";
+    return { model, percent, message };
+  } catch {
+    return null;
+  }
+}
 
 const XAI_MAX_CHARS = 5000;
 const XAI_URL = "https://api.x.ai/v1/tts";
@@ -116,6 +156,19 @@ function statusFor(
   extra?: Partial<TtsStatus>,
 ): TtsStatus {
   const hasXai = xaiConfigured();
+  const download = extra?.download ?? readBootstrapStatus();
+  const downloading = Boolean(download) && (extra?.state === "downloading" || download !== null && !extra?.state);
+  if (download && (downloading || extra?.state === "downloading" || extra?.state === "loading")) {
+    return {
+      provider: "voicestudio",
+      model,
+      state: "downloading",
+      voicestudioUp: health.up,
+      xaiConfigured: hasXai,
+      message: download.message,
+      download,
+    };
+  }
   if (health.up) {
     return {
       provider: "voicestudio",
@@ -124,16 +177,18 @@ function statusFor(
       voicestudioUp: true,
       xaiConfigured: hasXai,
       message: extra?.message ?? `Using local VoiceStudio (${modelLabel(model)}).`,
+      download: extra?.download,
     };
   }
-  if (health.loading) {
+  if (health.loading || download) {
     return {
       provider: "voicestudio",
       model,
-      state: "loading",
+      state: download ? "downloading" : "loading",
       voicestudioUp: false,
       xaiConfigured: hasXai,
-      message: "Loading voice engine. The first load can take a minute on this computer.",
+      message: download?.message ?? "Loading voice engine. The first load can take a minute on this computer.",
+      download: download ?? undefined,
     };
   }
   if (hasXai) {

@@ -1,7 +1,7 @@
 import { VOICES } from "./voices.ts";
 
 export const DEFAULT_VOICESTUDIO_URL = "http://127.0.0.1:3900";
-export const DEFAULT_VOICESTUDIO_MODEL = "omnivoice";
+export const DEFAULT_VOICESTUDIO_MODEL = "kittentts";
 
 /** Exact VoiceStudio engine ids this app may request. Never send aliases or voxcpm2. */
 export const PINNED_TTS_MODELS = ["omnivoice", "kittentts"] as const;
@@ -38,14 +38,14 @@ export function isLoadingVoiceError(message: string): boolean {
 
 export const TTS_MODELS = [
   {
-    id: "omnivoice",
-    label: "Best local (OmniVoice)",
-    note: "Higher quality. About a second per sentence once warm.",
+    id: "kittentts",
+    label: "Fast local",
+    note: "KittenTTS. English presets, ONNX, usually a few seconds per sentence on this CPU.",
   },
   {
-    id: "kittentts",
-    label: "Fast local (KittenTTS)",
-    note: "Eight English presets. Lighter on the CPU.",
+    id: "omnivoice",
+    label: "Best quality (slow)",
+    note: "Higher quality OmniVoice. About 20 seconds per sentence on this CPU. Weights are CC-BY-NC.",
   },
 ] as const;
 
@@ -93,7 +93,13 @@ export function voiceStudioVoice(model: string, voiceId: string): string {
 
 export type TtsProvider = "voicestudio" | "xai" | "none";
 
-export type TtsEngineState = "ready" | "loading" | "unavailable";
+export type TtsEngineState = "ready" | "loading" | "downloading" | "unavailable";
+
+export type TtsDownloadProgress = {
+  model: string | null;
+  percent: number | null;
+  message: string;
+};
 
 export type TtsStatus = {
   provider: TtsProvider;
@@ -102,4 +108,5 @@ export type TtsStatus = {
   voicestudioUp: boolean;
   xaiConfigured: boolean;
   message: string;
+  download?: TtsDownloadProgress;
 };
