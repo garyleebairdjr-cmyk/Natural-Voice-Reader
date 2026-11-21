@@ -1,0 +1,1048 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  Download,
+  Link2,
+  Loader2,
+  Moon,
+  Pause,
+  Play,
+  Plus,
+  Repeat,
+  SkipBack,
+  SkipForward,
+  Sun,
+  Trash2,
+  Volume2,
+} from "lucide-react";
+import { synthesizeSpeech } from "@/lib/tts.functions";
+import { readPage } from "@/lib/read-page.functions";
+import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
+import { SPEED_OPTIONS, useLane } from "@/lib/lane-store";
+import { DEVICE_VOICE, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
+
+type Phase = "idle" | "loading" | "playing" | "paused";
+
+const audioCache = new Map<string, string>();
+const cacheOrder: string[] = [];
+
+function remember(key: string, url: string) {
+  if (audioCache.has(key)) return;
+  audioCache.set(key, url);
+  cacheOrder.push(key);
+  while (cacheOrder.length > 6) {
+    const old = cacheOrder.shift();
+    if (!old) break;
+    const prev = audioCache.get(old);
+    if (prev) URL.revokeObjectURL(prev);
+    audioCache.delete(old);
+  }
+}
+
+function b64ToUrl(b64: string, mime: string) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
+function isAbort(err: unknown) {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+export function LaneApp() {
+  const cards = useLane((s) => s.cards);
+  const index = useLane((s) => s.index);
+  const voiceId = useLane((s) => s.voiceId);
+  const rotate = useLane((s) => s.rotate);
+  const speed = useLane((s) => s.speed);
+  const repeat = useLane((s) => s.repeat);
+  const setVoice = useLane((s) => s.setVoice);
+  const setRotate = useLane((s) => s.setRotate);
+  const setSpeed = useLane((s) => s.setSpeed);
+  const setRepeat = useLane((s) => s.setRepeat);
+  const theme = useLane((s) => s.theme);
+  const ink = useLane((s) => s.ink);
+  const setTheme = useLane((s) => s.setTheme);
+  const setInk = useLane((s) => s.setInk);
+  const setIndex = useLane((s) => s.setIndex);
+  const addPaste = useLane((s) => s.addPaste);
+  const addPage = useLane((s) => s.addPage);
+  const loadSamples = useLane((s) => s.loadSamples);
+  const removeCard = useLane((s) => s.removeCard);
+  const clear = useLane((s) => s.clear);
+
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [draft, setDraft] = useState("");
+  const [pageUrl, setPageUrl] = useState("");
+  const [source, setSource] = useState<"card" | "link">("card");
+  const [reading, setReading] = useState(false);
+  const [composerNote, setComposerNote] = useState<string | null>(null);
+  const [auditionId, setAuditionId] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const gen = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const prefetchAbort = useRef<AbortController | null>(null);
+  const deviceKeep = useRef<number | null>(null);
+  const loadedKey = useRef<string | null>(null);
+  const playingId = useRef<string | null>(null);
+  const modeRef = useRef<"lane" | "audition">("lane");
+  const wakeRef = useRef<WakeLockSentinel | null>(null);
+  const advanceRef = useRef<(fromIndex: number) => void>(() => {});
+
+  const phaseRef = useRef<Phase>("idle");
+  phaseRef.current = phase;
+  const card = cards[index];
+  const speaking = card ? voiceForCard(index, voiceId, rotate) : voiceById(voiceId);
+
+  useEffect(() => {
+    const finish = () => {
+      useLane.setState({ voiceId: "leo" });
+    };
+    const unsub = useLane.persist.onFinishHydration(finish);
+    void useLane.persist.rehydrate();
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const activeInk = inkFits(theme, ink) ? ink : defaultInk(theme);
+    if (activeInk !== ink) setInk(activeInk);
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.ink = activeInk;
+  }, [theme, ink, setInk]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onTime = () => {
+      const d = audio.duration;
+      setProgress(d && Number.isFinite(d) ? audio.currentTime / d : 0);
+    };
+    const onEnd = () => {
+      if (modeRef.current === "audition") {
+        setPhase("idle");
+        setProgress(0);
+        return;
+      }
+      advanceRef.current(useLane.getState().index);
+    };
+    audio.addEventListener("timeupdate", onTime);
+    audio.addEventListener("ended", onEnd);
+    return () => {
+      audio.removeEventListener("timeupdate", onTime);
+      audio.removeEventListener("ended", onEnd);
+    };
+  }, []);
+
+  useEffect(() => {
+    const id = playingId.current;
+    if (!id || modeRef.current === "audition") return;
+    if (!cards.some((c) => c.id === id)) {
+      gen.current += 1;
+      audioRef.current?.pause();
+      loadedKey.current = null;
+      playingId.current = null;
+      setPhase("idle");
+      setProgress(0);
+      void releaseScreen();
+    }
+  }, [cards]);
+
+  useEffect(() => {
+    if (audioRef.current && modeRef.current === "lane") {
+      audioRef.current.playbackRate = speed;
+    }
+  }, [speed]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible" && phaseRef.current === "playing") {
+        void holdScreen();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        toggleRef.current();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        nextRef.current();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        prevRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    const play = () => toggleRef.current();
+    const pause = () => pauseRef.current();
+    try {
+      navigator.mediaSession.setActionHandler("play", play);
+      navigator.mediaSession.setActionHandler("pause", pause);
+      navigator.mediaSession.setActionHandler("nexttrack", () => nextRef.current());
+      navigator.mediaSession.setActionHandler("previoustrack", () => prevRef.current());
+    } catch {
+      /* some embedded browsers reject handlers */
+    }
+  }, []);
+
+  async function holdScreen() {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      if (wakeRef.current) return;
+      wakeRef.current = await navigator.wakeLock.request("screen");
+      wakeRef.current.addEventListener("release", () => {
+        wakeRef.current = null;
+      });
+    } catch {
+      wakeRef.current = null;
+    }
+  }
+
+  async function releaseScreen() {
+    try {
+      await wakeRef.current?.release();
+    } catch {
+      /* already released */
+    }
+    wakeRef.current = null;
+  }
+
+  function publishSession(title: string, artist: string, playing: boolean) {
+    if (!("mediaSession" in navigator)) return;
+    const label = title.length > 80 ? `${title.slice(0, 77)}…` : title;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: label,
+      artist,
+      album: "Natural Web and Text Voice Reader",
+    });
+    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+  }
+
+  function stopDevice() {
+    if (deviceKeep.current != null) {
+      window.clearInterval(deviceKeep.current);
+      deviceKeep.current = null;
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  }
+
+  async function ensureAudio(text: string, voice: string, signal?: AbortSignal) {
+    const key = `${voice}\0${text}`;
+    const hit = audioCache.get(key);
+    if (hit) return { key, url: hit };
+    const result = await synthesizeSpeech({ data: { text, voiceId: voice }, signal });
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (!result.ok) throw new Error(result.error);
+    const url = b64ToUrl(result.audio, result.mime);
+    remember(key, url);
+    return { key, url };
+  }
+
+  function prefetchAhead(fromIndex: number) {
+    const state = useLane.getState();
+    const nextCard = state.cards[fromIndex + 1];
+    if (!nextCard || state.voiceId === "device") return;
+    const voice = voiceForCard(fromIndex + 1, state.voiceId, state.rotate);
+    if (audioCache.has(`${voice.id}\0${nextCard.text}`)) return;
+    prefetchAbort.current?.abort();
+    const ac = new AbortController();
+    prefetchAbort.current = ac;
+    void ensureAudio(nextCard.text, voice.id, ac.signal).catch(() => {});
+  }
+
+  function playDevice(text: string, token: number, rate: number) {
+    return new Promise<void>((resolve, reject) => {
+      if (!("speechSynthesis" in window)) {
+        reject(new Error("This browser has no device voice."));
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = Math.min(1.6, Math.max(0.6, rate));
+      const voices = window.speechSynthesis.getVoices();
+      const picked =
+        voices.find((v) => /^en/i.test(v.lang) && /natural|google|samantha|daniel|aria|jenny/i.test(v.name)) ??
+        voices.find((v) => /^en/i.test(v.lang));
+      if (picked) utterance.voice = picked;
+      utterance.onboundary = (event) => {
+        if (token !== gen.current || text.length === 0) return;
+        setProgress(Math.min(1, event.charIndex / text.length));
+      };
+      const clearKeep = () => {
+        if (deviceKeep.current != null) {
+          window.clearInterval(deviceKeep.current);
+          deviceKeep.current = null;
+        }
+      };
+      utterance.onend = () => {
+        clearKeep();
+        if (token !== gen.current) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+        resolve();
+      };
+      utterance.onerror = (event) => {
+        clearKeep();
+        if (event.error === "interrupted" || event.error === "canceled") {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+        reject(new Error("The device voice stopped."));
+      };
+      deviceKeep.current = window.setInterval(() => {
+        if (!window.speechSynthesis.speaking) return;
+        window.speechSynthesis.pause();
+        window.speechSynthesis.resume();
+      }, 10000);
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+
+  function advanceAfter(fromIndex: number) {
+    const state = useLane.getState();
+    const next = fromIndex + 1;
+    if (next < state.cards.length) {
+      void playAtRef.current(next);
+      return;
+    }
+    if (state.repeat && state.cards.length > 0) {
+      void playAtRef.current(0);
+      return;
+    }
+    setPhase("idle");
+    setProgress(1);
+    playingId.current = null;
+    void releaseScreen();
+    const current = state.cards[fromIndex];
+    if (current) {
+      publishSession(current.text, voiceForCard(fromIndex, state.voiceId, state.rotate).name, false);
+    }
+  }
+  advanceRef.current = advanceAfter;
+
+  async function playAt(nextIndex: number) {
+    const state = useLane.getState();
+    const nextCard = state.cards[nextIndex];
+    if (!nextCard) {
+      setPhase("idle");
+      return;
+    }
+    const token = ++gen.current;
+    stopDevice();
+    state.setIndex(nextIndex);
+    const voice = voiceForCard(nextIndex, state.voiceId, state.rotate);
+    setPhase("loading");
+    setError(null);
+    setNote(null);
+    setAuditionId(null);
+    modeRef.current = "lane";
+
+    const markPlaying = () => {
+      playingId.current = nextCard.id;
+      setPhase("playing");
+      void holdScreen();
+      publishSession(nextCard.text, voice.name, true);
+      prefetchAhead(nextIndex);
+    };
+
+    try {
+      if (voice.id === "device") {
+        markPlaying();
+        await playDevice(nextCard.text, token, useLane.getState().speed);
+        if (token !== gen.current || modeRef.current !== "lane") return;
+        advanceRef.current(nextIndex);
+        return;
+      }
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+      const { key, url } = await ensureAudio(nextCard.text, voice.id, ac.signal);
+      if (token !== gen.current) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+      if (loadedKey.current !== key) {
+        audio.src = url;
+        loadedKey.current = key;
+      }
+      audio.playbackRate = useLane.getState().speed;
+      await audio.play();
+      if (token !== gen.current) {
+        audio.pause();
+        return;
+      }
+      markPlaying();
+      setProgress(audio.currentTime && audio.duration ? audio.currentTime / audio.duration : 0);
+    } catch (err) {
+      if (isAbort(err) || token !== gen.current) return;
+      if (voice.id !== "device") {
+        setNote("That voice wasn't available, so this card is using the device voice.");
+        try {
+          markPlaying();
+          await playDevice(nextCard.text, token, useLane.getState().speed);
+          if (token !== gen.current || modeRef.current !== "lane") return;
+          advanceRef.current(nextIndex);
+          return;
+        } catch (deviceErr) {
+          if (isAbort(deviceErr) || token !== gen.current) return;
+        }
+      }
+      setPhase("paused");
+      setError(err instanceof Error ? err.message : "Could not read that card.");
+      void releaseScreen();
+    }
+  }
+
+  const playAtRef = useRef(playAt);
+  playAtRef.current = playAt;
+
+  function pause() {
+    gen.current += 1;
+    abortRef.current?.abort();
+    stopDevice();
+    audioRef.current?.pause();
+    setPhase("paused");
+    void releaseScreen();
+    const state = useLane.getState();
+    const current = state.cards[state.index];
+    if (current) publishSession(current.text, voiceForCard(state.index, state.voiceId, state.rotate).name, false);
+  }
+  const pauseRef = useRef(pause);
+  pauseRef.current = pause;
+
+  function toggle() {
+    const state = useLane.getState();
+    if (state.cards.length === 0) return;
+    if (phaseRef.current === "playing" || phaseRef.current === "loading") {
+      pause();
+      return;
+    }
+    const current = state.cards[state.index];
+    const voice = current ? voiceForCard(state.index, state.voiceId, state.rotate) : null;
+    const key = current && voice ? `${voice.id}\0${current.text}` : null;
+    const audio = audioRef.current;
+    if (
+      phaseRef.current === "paused" &&
+      audio &&
+      key &&
+      loadedKey.current === key &&
+      playingId.current === current?.id
+    ) {
+      audio.playbackRate = state.speed;
+      void audio.play().then(() => {
+        setPhase("playing");
+        void holdScreen();
+        if (current && voice) publishSession(current.text, voice.name, true);
+      });
+      return;
+    }
+    void playAt(state.index);
+  }
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+
+  function next() {
+    const state = useLane.getState();
+    if (state.cards.length === 0) return;
+    const upcoming = state.index + 1;
+    if (upcoming >= state.cards.length) {
+      if (state.repeat) void playAt(0);
+      return;
+    }
+    void playAt(upcoming);
+  }
+  const nextRef = useRef(next);
+  nextRef.current = next;
+
+  function prev() {
+    const audio = audioRef.current;
+    if (audio && audio.currentTime > 3 && (phaseRef.current === "playing" || phaseRef.current === "paused")) {
+      audio.currentTime = 0;
+      setProgress(0);
+      if (phaseRef.current === "paused") void toggleRef.current();
+      return;
+    }
+    const i = useLane.getState().index;
+    void playAt(Math.max(0, i - 1));
+  }
+  const prevRef = useRef(prev);
+  prevRef.current = prev;
+
+  async function audition(voice: Voice) {
+    if (phaseRef.current === "playing" || phaseRef.current === "loading") pause();
+    const token = ++gen.current;
+    setAuditionId(voice.id);
+    setError(null);
+    setNote(null);
+    setVoice(voice.id);
+    modeRef.current = "audition";
+    try {
+      if (voice.id === "device") {
+        await playDevice(`This is the device voice. I'll read the next post.`, token, 1);
+        if (token !== gen.current) return;
+        setPhase("idle");
+        return;
+      }
+      const line = `This is ${voice.name}. I'll read the next post.`;
+      const { url } = await ensureAudio(line, voice.id);
+      if (token !== gen.current) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.src = url;
+      loadedKey.current = null;
+      playingId.current = null;
+      audio.playbackRate = 1;
+      await audio.play();
+      if (token !== gen.current) {
+        audio.pause();
+        return;
+      }
+      setPhase("playing");
+    } catch (err) {
+      if (isAbort(err) || token !== gen.current) return;
+      setPhase("paused");
+      setError(err instanceof Error ? err.message : "Could not preview that voice.");
+    } finally {
+      if (token === gen.current) setAuditionId(null);
+    }
+  }
+
+  function laneNote(count: number, mode: "append" | "replace", extra = "") {
+    const noun = count === 1 ? "card" : "cards";
+    const base = mode === "replace" ? `Queue replaced with ${count} ${noun}.` : `Added ${count} ${noun}.`;
+    return base + extra;
+  }
+
+  function stopForReplace() {
+    gen.current += 1;
+    abortRef.current?.abort();
+    prefetchAbort.current?.abort();
+    stopDevice();
+    audioRef.current?.pause();
+    loadedKey.current = null;
+    playingId.current = null;
+    setPhase("idle");
+    setProgress(0);
+  }
+
+  function commitPaste(mode: "append" | "replace") {
+    const count = addPaste(draft, mode);
+    if (count === 0) {
+      setComposerNote("Paste a post or a few paragraphs first.");
+      return;
+    }
+    setDraft("");
+    setComposerNote(laneNote(count, mode));
+    if (mode === "replace") stopForReplace();
+  }
+
+  async function commitPage(mode: "append" | "replace") {
+    const url = pageUrl.trim();
+    if (!url) {
+      setComposerNote("Enter a link first.");
+      return;
+    }
+    setReading(true);
+    setComposerNote(null);
+    try {
+      const result = await readPage({ data: { url } });
+      if (!result.ok) {
+        setComposerNote(result.error);
+        return;
+      }
+      const count = addPage(result.text, mode);
+      if (count === 0) {
+        setComposerNote("That page didn't include readable text.");
+        return;
+      }
+      setComposerNote(laneNote(count, mode, result.trimmed ? " The page was long, so only the first part was kept." : ""));
+      if (mode === "replace") stopForReplace();
+    } catch {
+      setComposerNote("Could not read that page.");
+    } finally {
+      setReading(false);
+    }
+  }
+
+  function saveFile(url: string, name: string) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  async function downloadCard(cardIndex: number) {
+    const state = useLane.getState();
+    const item = state.cards[cardIndex];
+    if (!item) return;
+    const voice = voiceForCard(cardIndex, state.voiceId, state.rotate);
+    if (voice.id === "device") {
+      setError("Device voices play in the browser and don't make a file. Choose Leo or another voice to download.");
+      return;
+    }
+    setDownloadingId(item.id);
+    setError(null);
+    try {
+      const { url } = await ensureAudio(item.text, voice.id);
+      saveFile(url, `natural-reader-${String(cardIndex + 1).padStart(2, "0")}-${voice.name.toLowerCase()}.mp3`);
+    } catch (err) {
+      if (!isAbort(err)) setError(err instanceof Error ? err.message : "Could not download that card.");
+    } finally {
+      setDownloadingId((current) => (current === item.id ? null : current));
+    }
+  }
+
+  function chooseTheme(next: ThemeName) {
+    setTheme(next);
+    if (!inkFits(next, ink)) setInk(defaultInk(next));
+  }
+
+  const countLabel = cards.length === 0 ? "Empty queue" : `${index + 1} of ${cards.length}`;
+  const inks = inksFor(theme);
+
+  function transportBar(label: string) {
+    return (
+      <div className="flex flex-wrap items-center justify-center gap-3" aria-label={label}>
+        <button
+          type="button"
+          aria-label="Previous"
+          onClick={prev}
+          disabled={cards.length === 0}
+          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-40"
+        >
+          <SkipBack className="size-6" />
+        </button>
+        <button
+          type="button"
+          aria-label={phase === "playing" || phase === "loading" ? "Pause" : "Play"}
+          onClick={toggle}
+          disabled={cards.length === 0}
+          className="inline-flex size-20 items-center justify-center rounded-full bg-amber text-ink disabled:opacity-40"
+        >
+          {phase === "loading" ? (
+            <Loader2 className="size-8 animate-spin" />
+          ) : phase === "playing" ? (
+            <Pause className="size-8" />
+          ) : (
+            <Play className="size-8 translate-x-0.5" />
+          )}
+        </button>
+        <button
+          type="button"
+          aria-label="Next"
+          onClick={next}
+          disabled={cards.length === 0}
+          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-40"
+        >
+          <SkipForward className="size-6" />
+        </button>
+        <button
+          type="button"
+          onClick={() => void downloadCard(index)}
+          disabled={!card || downloadingId === card?.id}
+          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-fg disabled:opacity-40"
+        >
+          {downloadingId && downloadingId === card?.id ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Download className="size-4" />
+          )}
+          Download
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto grid min-h-dvh max-w-6xl lg:grid-cols-5">
+      <audio ref={audioRef} preload="none" className="hidden" />
+
+      <section className="flex min-w-0 flex-col gap-5 px-4 pt-5 pb-safe sm:px-6 lg:col-span-3 lg:px-8 lg:pt-8 lg:pb-8">
+        <header className="flex flex-col gap-3">
+          <h1 className="font-display text-3xl leading-tight font-semibold text-balance text-fg sm:text-4xl">
+            Natural Web and Text Voice Reader
+          </h1>
+          <p className="max-w-xl text-sm leading-relaxed text-muted">
+            Choose the Audio voice and read along, and/or download the audio file. (browsers may have limited
+            voice options)
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Background">
+              <button
+                type="button"
+                onClick={() => chooseTheme("light")}
+                aria-pressed={theme === "light"}
+                className={
+                  "inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-sm font-semibold " +
+                  (theme === "light" ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                <Sun className="size-4" />
+                Light
+              </button>
+              <button
+                type="button"
+                onClick={() => chooseTheme("dark")}
+                aria-pressed={theme === "dark"}
+                className={
+                  "inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-sm font-semibold " +
+                  (theme === "dark" ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                <Moon className="size-4" />
+                Dark
+              </button>
+            </div>
+            <div className="flex items-center gap-2" role="group" aria-label="Text color">
+              {inks.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-label={`${item.label} text`}
+                  aria-pressed={ink === item.id}
+                  onClick={() => setInk(item.id)}
+                  className={
+                    "inline-flex size-11 items-center justify-center rounded-full border " +
+                    (ink === item.id ? "border-amber" : "border-line")
+                  }
+                >
+                  <span className={`size-6 rounded-full swatch-${item.id}`} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </header>
+
+        <div className="sticky top-0 z-10 -mx-4 bg-bg px-4 py-3 sm:-mx-6 sm:px-6">
+          {transportBar("Top playback")}
+        </div>
+
+        <article className="flex min-h-72 flex-1 flex-col rounded-card border border-line bg-surface p-4 sm:p-6">
+          <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+            <span className="font-semibold text-amber tabular-nums">{countLabel}</span>
+            <span className="truncate text-muted">
+              {auditionId ? `Hearing ${voiceById(auditionId).name}` : speaking.name}
+              {rotate && voiceId !== "device" && !auditionId ? " · switches each post" : ""}
+            </span>
+          </div>
+
+          <div className="mb-4 h-1 overflow-hidden rounded-full bg-raise">
+            <div
+              className="h-full bg-amber"
+              style={{ width: `${Math.round(progress * 100)}%` }}
+            />
+          </div>
+
+          {card ? (
+            <p className="flex-1 text-xl leading-snug font-medium text-pretty text-read sm:text-2xl">{card.text}</p>
+          ) : (
+            <div className="flex flex-1 flex-col items-start justify-center gap-4">
+              <p className="text-xl leading-snug font-medium text-fg">Nothing queued.</p>
+              <p className="max-w-sm text-sm leading-relaxed text-muted">
+                Paste text, or load a short sample to hear the voices.
+              </p>
+              <button
+                type="button"
+                onClick={() => loadSamples("replace")}
+                className="inline-flex min-h-12 items-center rounded-full bg-amber px-5 text-sm font-semibold text-ink"
+              >
+                Load sample text
+              </button>
+            </div>
+          )}
+
+          {error ? (
+            <p className="mt-4 text-sm text-danger" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {note ? <p className="mt-3 text-sm text-muted">{note}</p> : null}
+        </article>
+
+        {transportBar("Bottom playback")}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Speed">
+            {SPEED_OPTIONS.map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setSpeed(opt.value)}
+                aria-pressed={speed === opt.value}
+                className={
+                  "min-h-11 rounded-full px-3 text-sm font-semibold " +
+                  (speed === opt.value ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setRepeat(!repeat)}
+            aria-pressed={repeat}
+            className={
+              "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm font-semibold " +
+              (repeat ? "border-amber bg-raise text-amber" : "border-line bg-surface text-muted")
+            }
+          >
+            <Repeat className="size-4" />
+            Repeat
+          </button>
+        </div>
+
+        <p className="text-xs leading-relaxed text-muted">
+          Set the queue before you need your hands. Play and download sit above and below a long read.
+          The next card is prepared while the current one finishes. Skip works from the lock screen once playback starts.
+        </p>
+      </section>
+
+      <aside className="flex min-w-0 flex-col gap-6 border-line px-4 py-6 pb-safe sm:px-6 lg:col-span-2 lg:max-h-dvh lg:overflow-y-auto lg:border-l lg:px-5 lg:py-8">
+        <div>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Voices</h2>
+            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Voice mode">
+              <button
+                type="button"
+                onClick={() => setRotate(false)}
+                aria-pressed={!rotate}
+                className={
+                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
+                  (!rotate ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                One voice
+              </button>
+              <button
+                type="button"
+                onClick={() => setRotate(true)}
+                aria-pressed={rotate}
+                className={
+                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
+                  (rotate ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                Switch each post
+              </button>
+            </div>
+          </div>
+          <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
+            {[DEVICE_VOICE, ...VOICES].map((voice) => {
+              const selected = voice.id === voiceId;
+              return (
+                <div
+                  key={voice.id}
+                  className={
+                    "flex min-w-36 shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 " +
+                    (selected ? "border-amber bg-raise" : "border-line bg-surface")
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={() => setVoice(voice.id)}
+                    className="min-h-11 flex-1 text-left"
+                  >
+                    <span className="block text-sm font-semibold text-fg">{voice.name}</span>
+                    <span className="block text-xs text-muted">{voice.note}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Hear ${voice.name}`}
+                    onClick={() => void audition(voice)}
+                    className="inline-flex size-11 items-center justify-center rounded-full text-amber"
+                  >
+                    {auditionId === voice.id ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Volume2 className="size-4" />
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Queue</h2>
+            <button
+              type="button"
+              onClick={() => {
+                pause();
+                clear();
+                setProgress(0);
+                loadedKey.current = null;
+                playingId.current = null;
+              }}
+              disabled={cards.length === 0}
+              className="text-xs font-semibold text-muted disabled:opacity-40"
+            >
+              Clear
+            </button>
+          </div>
+          <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto lg:max-h-none lg:flex-1">
+            {cards.map((item, i) => {
+              const active = i === index;
+              const v = voiceForCard(i, voiceId, rotate);
+              return (
+                <li key={item.id} className="flex items-stretch gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIndex(i);
+                      void playAt(i);
+                    }}
+                    className={
+                      "min-h-14 flex-1 rounded-2xl border px-3 py-2 text-left " +
+                      (active ? "border-amber bg-raise" : "border-line bg-surface")
+                    }
+                  >
+                    <span className="block text-xs font-semibold text-amber tabular-nums">
+                      {i + 1} · {v.name}
+                    </span>
+                    <span className="mt-1 line-clamp-2 text-sm leading-snug text-read">{item.text}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Download card ${i + 1}`}
+                    onClick={() => void downloadCard(i)}
+                    disabled={downloadingId === item.id}
+                    className="inline-flex w-11 items-center justify-center rounded-2xl border border-line text-fg disabled:opacity-40"
+                  >
+                    {downloadingId === item.id ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Download className="size-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove card ${i + 1}`}
+                    onClick={() => removeCard(item.id)}
+                    className="inline-flex w-11 items-center justify-center rounded-2xl border border-line text-muted"
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (source === "link") void commitPage("append");
+            else commitPaste("append");
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Add</h2>
+            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="What to add">
+              <button
+                type="button"
+                onClick={() => {
+                  setSource("card");
+                  setComposerNote(null);
+                }}
+                aria-pressed={source === "card"}
+                className={
+                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
+                  (source === "card" ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                Card
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSource("link");
+                  setComposerNote(null);
+                }}
+                aria-pressed={source === "link"}
+                className={
+                  "inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-xs font-semibold " +
+                  (source === "link" ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                <Link2 className="size-3.5" />
+                Link
+              </button>
+            </div>
+          </div>
+          {source === "card" ? (
+            <textarea
+              id="paste"
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setComposerNote(null);
+              }}
+              rows={5}
+              placeholder="Paste a post or a page. A blank line starts a new card. Each card can be up to 5,000 characters."
+              className="w-full resize-y rounded-2xl border border-line bg-surface px-3 py-3 text-sm leading-relaxed text-fg outline-none placeholder:text-muted focus:border-amber"
+            />
+          ) : (
+            <>
+              <input
+                id="page-url"
+                type="url"
+                inputMode="url"
+                value={pageUrl}
+                onChange={(e) => {
+                  setPageUrl(e.target.value);
+                  setComposerNote(null);
+                }}
+                placeholder="https://example.com/article"
+                className="min-h-12 w-full rounded-2xl border border-line bg-surface px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
+              />
+              <p className="text-xs leading-relaxed text-muted">
+                A page is queued in pieces of about 2,000 characters, split on a word.
+              </p>
+            </>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              disabled={reading}
+              className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-amber px-4 text-sm font-semibold text-ink disabled:opacity-40"
+            >
+              {reading ? <Loader2 className="size-4 animate-spin" /> : source === "link" ? <Link2 className="size-4" /> : <Plus className="size-4" />}
+              {reading ? "Reading page" : source === "link" ? "Read page" : "Add to lane"}
+            </button>
+            <button
+              type="button"
+              disabled={reading}
+              onClick={() => (source === "link" ? void commitPage("replace") : commitPaste("replace"))}
+              className="inline-flex min-h-12 items-center justify-center rounded-full border border-line px-4 text-sm font-semibold text-fg disabled:opacity-40"
+            >
+              Replace
+            </button>
+          </div>
+          {composerNote ? <p className="text-xs text-muted">{composerNote}</p> : null}
+        </form>
+      </aside>
+    </div>
+  );
+}

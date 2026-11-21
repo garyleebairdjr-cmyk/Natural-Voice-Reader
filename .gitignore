@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build and test output
+dist/
+build/
+coverage/
+.vercel/
+.tanstack/
+screenshots/*
+!screenshots/.gitkeep
+
+# App Builder workspace state and instructions
+.grok/*
+!.grok/app-env.json
+.grok-changes/
+AGENTS.md
+AGENTS.project.md
+.project_id
+.node_modules.lock
+startup.sh
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
