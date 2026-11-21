@@ -48,7 +48,7 @@ export type VoicePack = {
   sizeBytes: number;
   source: VoicePackSource;
   voices: CatalogVoice[];
-  origin: "catalog" | "overlay";
+  origin: "catalog" | "overlay" | "community";
   overlayFile?: string;
 };
 
@@ -67,6 +67,12 @@ export type VoicePackStatus = VoicePack & {
   progress?: VoicePackProgress;
 };
 
+export type CommunityBrowsePack = VoicePack & {
+  indexUrl: string;
+  installed: boolean;
+  inLibrary: boolean;
+};
+
 const HF_REPO = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\/[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SPDX = /^[A-Za-z0-9.+-]{3,128}$/;
@@ -76,21 +82,79 @@ export function isPackId(id: unknown): id is string {
   return typeof id === "string" && PACK_ID_PATTERN.test(id);
 }
 
+export const DEFAULT_COMMUNITY_INDEX_URL =
+  "https://raw.githubusercontent.com/garyleebairdjr-cmyk/Natural-Voice-Reader/main/voices/community-catalog.json";
+
+export const DEFAULT_CATALOG_HOSTS = [
+  "huggingface.co",
+  "github.com",
+  "raw.githubusercontent.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "media.githubusercontent.com",
+  "codeload.github.com",
+] as const;
+
+export const COMMUNITY_INDEX_MAX_BYTES = 1_048_576;
+
+export type CatalogUrlOptions = {
+  hosts?: readonly string[];
+  allowLocal?: boolean;
+};
+
+export type ParsePackOptions = {
+  requireFileHashes?: boolean;
+  allowedHosts?: readonly string[];
+  allowLocal?: boolean;
+};
+
 function issue(path: string, message: string): CatalogIssue {
   return { path, message };
 }
 
+function isPrivateHost(host: string): boolean {
+  const name = host.toLowerCase();
+  if (name === "localhost" || name.endsWith(".localhost")) return true;
+  if (name === "127.0.0.1" || name === "::1" || name === "0.0.0.0") return true;
+  if (/^10\./.test(name) || /^192\.168\./.test(name) || /^172\.(1[6-9]|2\d|3[0-1])\./.test(name)) return true;
+  if (name.endsWith(".internal") || name.endsWith(".local")) return true;
+  return false;
+}
+
+export function catalogHostAllowed(host: string, hosts: readonly string[] = DEFAULT_CATALOG_HOSTS): boolean {
+  const name = host.toLowerCase();
+  return hosts.some((allowed) => name === allowed || name.endsWith(`.${allowed}`));
+}
+
+/** Public https URL with no credentials. Official catalogs use this looser check. */
 function isHttpsUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:") return false;
     if (url.username || url.password) return false;
-    const host = url.hostname.toLowerCase();
-    if (host === "localhost" || host.endsWith(".localhost")) return false;
-    // Block loopback and private IPv4 / IPv6.
-    if (host === "127.0.0.1" || host === "::1" || host === "0.0.0.0") return false;
-    if (/^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return false;
-    return true;
+    return !isPrivateHost(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** Community indexes and pack sources must be https on an allowed host, unless a local test override is on. */
+export function isAllowedCatalogUrl(raw: string, options: CatalogUrlOptions = {}): boolean {
+  const allowLocal = Boolean(options.allowLocal);
+  const hosts = options.hosts ?? DEFAULT_CATALOG_HOSTS;
+  if (allowLocal && raw.startsWith("/") && !raw.includes("://")) {
+    return !raw.includes("\0");
+  }
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password) return false;
+    if (url.protocol === "file:") return allowLocal;
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      if (isPrivateHost(url.hostname)) return allowLocal;
+      if (url.protocol !== "https:") return false;
+      return catalogHostAllowed(url.hostname, hosts);
+    }
+    return false;
   } catch {
     return false;
   }
@@ -129,18 +193,24 @@ function parseVoice(raw: unknown, path: string, errors: CatalogIssue[]): Catalog
   };
 }
 
-function parseSource(raw: unknown, path: string, errors: CatalogIssue[]): VoicePackSource | null {
+function parseSource(raw: unknown, path: string, errors: CatalogIssue[], options: ParsePackOptions = {}): VoicePackSource | null {
   if (!raw || typeof raw !== "object") {
     errors.push(issue(path, "source is required."));
     return null;
   }
+  const requireHashes = Boolean(options.requireFileHashes);
   const s = raw as Record<string, unknown>;
   if (s.kind === "huggingface") {
     if (typeof s.repo !== "string" || !HF_REPO.test(s.repo)) {
       errors.push(issue(`${path}.repo`, "A Hugging Face repo must look like owner/name."));
       return null;
     }
-    const files = parseFiles(s.files, `${path}.files`, errors, false);
+    if (options.allowedHosts && !catalogHostAllowed("huggingface.co", options.allowedHosts)) {
+      errors.push(issue(`${path}.repo`, "Hugging Face is not on the catalog host allowlist."));
+      return null;
+    }
+    const files = parseFiles(s.files, `${path}.files`, errors, requireHashes, requireHashes);
+    if (requireHashes && !files) return null;
     if (s.files !== undefined && files == null && Array.isArray(s.files) === false) {
       return null;
     }
@@ -152,17 +222,24 @@ function parseSource(raw: unknown, path: string, errors: CatalogIssue[]): VoiceP
     };
   }
   if (s.kind === "tarball") {
-    if (typeof s.url !== "string" || !isHttpsUrl(s.url)) {
-      errors.push(issue(`${path}.url`, "Tarball URL must be https and a public host."));
+    const urlOk = typeof s.url === "string" && (
+      options.allowedHosts
+        ? isAllowedCatalogUrl(s.url, { hosts: options.allowedHosts, allowLocal: options.allowLocal })
+        : isHttpsUrl(s.url)
+    );
+    if (!urlOk) {
+      errors.push(issue(`${path}.url`, options.allowedHosts
+        ? "Tarball URL must be https on an allowed host."
+        : "Tarball URL must be https and a public host."));
       return null;
     }
     if (typeof s.dirName !== "string" || !/^[A-Za-z0-9._-]+$/.test(s.dirName)) {
       errors.push(issue(`${path}.dirName`, "dirName must be a single path segment."));
       return null;
     }
-    const files = parseFiles(s.files, `${path}.files`, errors, true);
+    const files = parseFiles(s.files, `${path}.files`, errors, true, requireHashes);
     if (!files) return null;
-    return { kind: "tarball", url: s.url, dirName: s.dirName, files };
+    return { kind: "tarball", url: s.url as string, dirName: s.dirName, files };
   }
   errors.push(issue(`${path}.kind`, "source.kind must be huggingface or tarball."));
   return null;
@@ -173,6 +250,7 @@ function parseFiles(
   path: string,
   errors: CatalogIssue[],
   required: boolean,
+  requireHashes = false,
 ): VoicePackSourceFile[] | null {
   if (raw == null) {
     if (required) {
@@ -196,6 +274,10 @@ function parseFiles(
       errors.push(issue(`${path}[${i}].name`, "File names must be a single path segment."));
       return;
     }
+    if (requireHashes && (typeof f.sha256 !== "string" || !SHA256.test(f.sha256))) {
+      errors.push(issue(`${path}[${i}].sha256`, "Community packs require a sha256 digest for every file."));
+      return;
+    }
     if (f.sha256 != null && (typeof f.sha256 !== "string" || !SHA256.test(f.sha256))) {
       errors.push(issue(`${path}[${i}].sha256`, "sha256 must be a 64-character hex digest."));
       return;
@@ -205,7 +287,13 @@ function parseFiles(
   return files.length === raw.length ? files : null;
 }
 
-export function parsePack(raw: unknown, path: string, origin: VoicePack["origin"], overlayFile?: string): {
+export function parsePack(
+  raw: unknown,
+  path: string,
+  origin: VoicePack["origin"],
+  overlayFile?: string,
+  options: ParsePackOptions = {},
+): {
   pack: VoicePack | null;
   errors: CatalogIssue[];
 } {
@@ -214,6 +302,14 @@ export function parsePack(raw: unknown, path: string, origin: VoicePack["origin"
     return { pack: null, errors: [issue(path, "A pack must be an object.")] };
   }
   const p = raw as Record<string, unknown>;
+  const resolvedOrigin: VoicePack["origin"] = p.community === true ? "community" : origin;
+  const resolvedOptions: ParsePackOptions = resolvedOrigin === "community"
+    ? {
+        allowLocal: options.allowLocal,
+        requireFileHashes: options.requireFileHashes ?? true,
+        allowedHosts: options.allowedHosts ?? DEFAULT_CATALOG_HOSTS,
+      }
+    : options;
   if (!isPackId(p.id)) {
     errors.push(issue(`${path}.id`, "Pack id must match [a-z][a-z0-9_-]{1,63}."));
   }
@@ -235,7 +331,7 @@ export function parsePack(raw: unknown, path: string, origin: VoicePack["origin"
   if (typeof p.sizeBytes !== "number" || !Number.isFinite(p.sizeBytes) || p.sizeBytes < 0) {
     errors.push(issue(`${path}.sizeBytes`, "sizeBytes must be a non-negative number."));
   }
-  const source = parseSource(p.source, `${path}.source`, errors);
+  const source = parseSource(p.source, `${path}.source`, errors, resolvedOptions);
   if (!Array.isArray(p.voices)) {
     errors.push(issue(`${path}.voices`, "voices must be an array (it may be empty)."));
   }
@@ -258,14 +354,20 @@ export function parsePack(raw: unknown, path: string, origin: VoicePack["origin"
       sizeBytes: p.sizeBytes as number,
       source,
       voices,
-      origin,
+      origin: resolvedOrigin,
       overlayFile,
     },
     errors,
   };
 }
 
-export function parseCatalog(raw: unknown, path: string, origin: VoicePack["origin"], overlayFile?: string): {
+export function parseCatalog(
+  raw: unknown,
+  path: string,
+  origin: VoicePack["origin"],
+  overlayFile?: string,
+  options: ParsePackOptions = {},
+): {
   packs: VoicePack[];
   errors: CatalogIssue[];
 } {
@@ -284,7 +386,7 @@ export function parseCatalog(raw: unknown, path: string, origin: VoicePack["orig
   const packs: VoicePack[] = [];
   const seen = new Set<string>();
   doc.packs.forEach((item, i) => {
-    const parsed = parsePack(item, `${path}.packs[${i}]`, origin, overlayFile);
+    const parsed = parsePack(item, `${path}.packs[${i}]`, origin, overlayFile, options);
     errors.push(...parsed.errors);
     if (!parsed.pack) return;
     if (seen.has(parsed.pack.id)) {
@@ -320,6 +422,55 @@ export function mergeCatalogs(
     packs.push(pack);
   }
   return { packs, errors };
+}
+
+
+export type CommunityPackFilter = {
+  query?: string;
+  language?: string;
+  gender?: "male" | "female" | "neutral";
+  license?: string;
+  commercialUse?: boolean;
+};
+
+export function parseCommunityCatalog(
+  raw: unknown,
+  path: string,
+  options: ParsePackOptions = {},
+): { packs: VoicePack[]; errors: CatalogIssue[] } {
+  return parseCatalog(raw, path, "community", path, {
+    requireFileHashes: true,
+    allowedHosts: options.allowedHosts ?? DEFAULT_CATALOG_HOSTS,
+    allowLocal: options.allowLocal,
+  });
+}
+
+export function filterCommunityPacks(packs: VoicePack[], filter: CommunityPackFilter = {}): VoicePack[] {
+  const query = filter.query?.trim().toLowerCase() ?? "";
+  return packs.filter((pack) => {
+    if (filter.commercialUse != null && pack.commercialUse !== filter.commercialUse) return false;
+    if (filter.license && pack.license.toLowerCase() !== filter.license.toLowerCase()) return false;
+    if (filter.language) {
+      const needle = filter.language.toLowerCase();
+      const matches = pack.voices.some(
+        (voice) => voice.language.toLowerCase() === needle || voice.language.toLowerCase().startsWith(`${needle}-`) || voice.language.toLowerCase().startsWith(needle),
+      );
+      if (!matches) return false;
+    }
+    if (filter.gender && !pack.voices.some((voice) => voice.gender === filter.gender)) return false;
+    if (!query) return true;
+    const hay = [
+      pack.id,
+      pack.name,
+      pack.description ?? "",
+      pack.engine,
+      pack.license,
+      ...pack.voices.flatMap((voice) => [voice.id, voice.name, voice.language, voice.accent ?? "", voice.note ?? ""]),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(query);
+  });
 }
 
 export function packById(id: string, packs: VoicePack[]): VoicePack | undefined {

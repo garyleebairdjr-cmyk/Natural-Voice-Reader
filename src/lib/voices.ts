@@ -6,6 +6,7 @@ export type Voice = {
   language: string;
   /** Accent family for English voices, when it is not implied by the language tag. */
   accent?: string;
+  gender?: "male" | "female" | "neutral";
 };
 
 export const DEVICE_VOICE: Voice = {
@@ -22,6 +23,7 @@ const SPECIAL_VOICES: Voice[] = [
     note: "Jarvis-style butler. Generic RP; not a film or actor voice.",
     language: "en-GB",
     accent: "british",
+    gender: "male",
   },
   {
     id: "mira",
@@ -29,6 +31,7 @@ const SPECIAL_VOICES: Voice[] = [
     note: "Clear, natural Indian English.",
     language: "en-IN",
     accent: "indian",
+    gender: "female",
   },
   {
     id: "arjun",
@@ -36,28 +39,29 @@ const SPECIAL_VOICES: Voice[] = [
     note: "Calm, natural Indian English.",
     language: "en-IN",
     accent: "indian",
+    gender: "male",
   },
 ];
 
 /** Curated voices. Leo is the default. Device is the browser fallback. */
 export const VOICES: Voice[] = [
   ...SPECIAL_VOICES,
-  { id: "leo", name: "Leo", note: "Steady, British", language: "en" },
-  { id: "eve", name: "Eve", note: "Bright, British", language: "en" },
-  { id: "rex", name: "Rex", note: "Clear and direct", language: "en" },
-  { id: "sal", name: "Sal", note: "Smooth midrange", language: "en" },
-  { id: "ara", name: "Ara", note: "Warm and close", language: "en" },
-  { id: "orion", name: "Orion", note: "Cinematic read", language: "en" },
-  { id: "helix", name: "Helix", note: "Commentary punch", language: "en" },
-  { id: "luna", name: "Luna", note: "Patient and soft", language: "en" },
-  { id: "sirius", name: "Sirius", note: "Quick and playful", language: "en" },
-  { id: "aurora", name: "Aurora", note: "Calm and even", language: "en" },
-  { id: "atlas", name: "Atlas", note: "Low and sure", language: "en" },
-  { id: "rigel", name: "Rigel", note: "Precise, Australian", language: "en" },
-  { id: "naksh", name: "Naksh", note: "Thoughtful, Indian", language: "en" },
-  { id: "lumen", name: "Lumen", note: "Warm educator", language: "en" },
-  { id: "iris", name: "Iris", note: "Upbeat and light", language: "en" },
-  { id: "castor", name: "Castor", note: "Easygoing", language: "en" },
+  { id: "leo", name: "Leo", note: "Steady, British", language: "en", accent: "british", gender: "male" },
+  { id: "eve", name: "Eve", note: "Bright, British", language: "en", accent: "british", gender: "female" },
+  { id: "rex", name: "Rex", note: "Clear and direct", language: "en", gender: "male" },
+  { id: "sal", name: "Sal", note: "Smooth midrange", language: "en", gender: "female" },
+  { id: "ara", name: "Ara", note: "Warm and close", language: "en", gender: "female" },
+  { id: "orion", name: "Orion", note: "Cinematic read", language: "en", gender: "male" },
+  { id: "helix", name: "Helix", note: "Commentary punch", language: "en", gender: "male" },
+  { id: "luna", name: "Luna", note: "Patient and soft", language: "en", gender: "female" },
+  { id: "sirius", name: "Sirius", note: "Quick and playful", language: "en", gender: "female" },
+  { id: "aurora", name: "Aurora", note: "Calm and even", language: "en", gender: "female" },
+  { id: "atlas", name: "Atlas", note: "Low and sure", language: "en", gender: "male" },
+  { id: "rigel", name: "Rigel", note: "Precise, Australian", language: "en", accent: "australian", gender: "female" },
+  { id: "naksh", name: "Naksh", note: "Thoughtful, Indian", language: "en", accent: "indian", gender: "male" },
+  { id: "lumen", name: "Lumen", note: "Warm educator", language: "en", gender: "male" },
+  { id: "iris", name: "Iris", note: "Upbeat and light", language: "en", gender: "female" },
+  { id: "castor", name: "Castor", note: "Easygoing", language: "en", gender: "male" },
 ];
 
 const IDS = new Set(VOICES.map((v) => v.id));
@@ -72,9 +76,15 @@ export function isVoiceId(id: string): boolean {
 }
 
 /** Map a saved or requested voice onto one that still exists. */
-export function canonicalVoiceId(id: unknown): string {
+export function canonicalVoiceId(id: unknown, knownIds?: Iterable<string>): string {
   if (id === DEVICE_VOICE.id) return DEVICE_VOICE.id;
-  if (typeof id === "string" && isVoiceId(id)) return id;
+  if (typeof id !== "string" || !id) return DEFAULT_VOICE_ID;
+  if ((REMOVED_VOICE_IDS as readonly string[]).includes(id)) return DEFAULT_VOICE_ID;
+  if (isVoiceId(id)) return id;
+  const known = knownIds ? new Set(knownIds) : null;
+  if (known) return known.has(id) ? id : DEFAULT_VOICE_ID;
+  // Keep well-formed ids so community or overlay voices survive persist before packs load.
+  if (/^[a-z][a-z0-9_-]{1,63}$/.test(id)) return id;
   return DEFAULT_VOICE_ID;
 }
 

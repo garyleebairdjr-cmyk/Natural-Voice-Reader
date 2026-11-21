@@ -111,20 +111,56 @@ whether it may be used commercially. The current packs are:
 - **kokoro** — optional, Apache-2.0, Butler (British), Mira, and Arjun
 - **omnivoice** — optional, CC-BY-NC, enables **Best quality (slow)**
 
-Installed voices appear in the voice picker. Uninstalled packs stay in
-Settings as "Not installed" until you add them. The installer only places
-KittenTTS; everything else is on demand.
+Installed voices appear in the searchable voice picker, grouped by accent or
+language, with gender, engine, and quality badges. Favorites and recent voices
+stay at the top. A compact version of the picker lives in the playback bar so
+you can change the voice while Settings is hidden.
+
+The settings panel can be hidden to give the queue the full width. Use the
+Settings button, or press `,` (or Ctrl+, / Cmd+,). On screens narrower than
+1024px the panel starts collapsed and opens as a slide-over drawer. That
+preference is saved with the rest of the reader settings.
+
+`Clear queue` removes every card, after a confirmation, and offers Undo.
+`Reset to defaults` restores the voice, speed, volume, engine, and settings
+panel without touching the queue or installed packs.
 
 ```sh
 nvr voices list
 nvr voices install kokoro
 nvr voices remove kokoro
+nvr voices browse
+nvr voices browse ljspeech
 ```
 
 Downloads go into the per-user cache, are verified when checksums are in the
 catalog, and can be removed to free disk space. The UI and the CLI only accept
-pack ids from the catalog (or your overlays). They will not fetch an arbitrary
-URL from the client.
+pack ids from the official catalog, a validated community index, or your
+overlays. They will not fetch an arbitrary URL from the client.
+
+### Community packs
+
+**Settings > Voice packs > Browse** loads a remote community index (the same
+schema as `voices/catalog.json`). The default index is
+`voices/community-catalog.json` in this repository
+(`raw.githubusercontent.com/garyleebairdjr-cmyk/Natural-Voice-Reader/main/voices/community-catalog.json`).
+The server fetches that JSON, checks the schema, allows only https hosts such
+as `github.com` and `huggingface.co`, caps the index size, and requires a
+sha256 digest on every community pack file. Installing writes an overlay under
+`~/.config/nvr/voices.d/` marked `community` and then uses the normal install
+path.
+
+The shipped community index currently includes two English Piper packs whose
+MODEL_CARDs are clearly licensed and were trained from scratch: LJ Speech
+(public domain) and LibriTTS (CC BY 4.0). Voices fine-tuned from Lessac,
+marked non-commercial, or with unclear cards (including `en_GB-alan`) are not
+listed. A Piper-capable helper is still needed to *speak* those packs after
+they are installed.
+
+Advanced users can add another catalog URL in Settings, with a warning that
+the source must be trusted. `NVR_COMMUNITY_INDEX` can point at a local file
+and `NVR_CATALOG_ALLOW_LOCAL=1` allows `file://` or localhost indexes for
+testing.
 
 ### Adding your own packs
 

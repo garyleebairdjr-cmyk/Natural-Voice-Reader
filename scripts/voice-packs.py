@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -424,7 +425,7 @@ def download_huggingface(pack: dict[str, Any], status: Path) -> Path:
 
 
 def cmd_install(pack_id: str, status_file: str | None) -> int:
-    pack = get_pack(pack_id)
+    pack = prepare_pack(pack_id)
     status = status_path(status_file)
     label = pack.get("name") or pack_id
     if pack_present(pack):
@@ -490,6 +491,258 @@ def cmd_remove(pack_id: str, status_file: str | None) -> int:
     return 0
 
 
+
+DEFAULT_COMMUNITY_INDEX = (
+    "https://raw.githubusercontent.com/garyleebairdjr-cmyk/Natural-Voice-Reader/main/voices/community-catalog.json"
+)
+DEFAULT_CATALOG_HOSTS = (
+    "huggingface.co",
+    "github.com",
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "media.githubusercontent.com",
+    "codeload.github.com",
+)
+COMMUNITY_INDEX_MAX_BYTES = 1_048_576
+
+
+def catalog_allow_local() -> bool:
+    return os.environ.get("NVR_CATALOG_ALLOW_LOCAL", "").strip().lower() in {"1", "true", "yes"}
+
+
+def default_community_index() -> str:
+    return os.environ.get("NVR_COMMUNITY_INDEX", "").strip() or DEFAULT_COMMUNITY_INDEX
+
+
+def catalog_indexes_path() -> Path:
+    if os.environ.get("NVR_CATALOG_INDEXES"):
+        return Path(os.environ["NVR_CATALOG_INDEXES"]).expanduser()
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "nvr" / "catalog-indexes.json"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nvr" / "catalog-indexes.json"
+
+
+def _host_allowed(host: str, hosts: tuple[str, ...] = DEFAULT_CATALOG_HOSTS) -> bool:
+    name = host.lower()
+    return any(name == allowed or name.endswith("." + allowed) for allowed in hosts)
+
+
+def _is_private_host(host: str) -> bool:
+    name = host.lower()
+    if name in {"localhost", "127.0.0.1", "::1", "0.0.0.0"} or name.endswith(".localhost"):
+        return True
+    if re.match(r"^10\.", name) or re.match(r"^192\.168\.", name) or re.match(r"^172\.(1[6-9]|2\d|3[0-1])\.", name):
+        return True
+    return name.endswith(".internal") or name.endswith(".local")
+
+
+def is_allowed_catalog_url(raw: str, allow_local: bool | None = None) -> bool:
+    if allow_local is None:
+        allow_local = catalog_allow_local()
+    if allow_local and raw.startswith("/") and "://" not in raw:
+        return True
+    try:
+        parsed = urllib.parse.urlparse(raw)
+    except ValueError:
+        return False
+    if parsed.username or parsed.password:
+        return False
+    if parsed.scheme == "file":
+        return allow_local
+    if parsed.scheme in {"http", "https"}:
+        host = parsed.hostname or ""
+        if _is_private_host(host):
+            return allow_local
+        if parsed.scheme != "https":
+            return False
+        return _host_allowed(host)
+    return False
+
+
+def read_catalog_index_urls() -> list[str]:
+    fallback = default_community_index()
+    path = catalog_indexes_path()
+    extra: list[str] = []
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            urls = data.get("urls") if isinstance(data, dict) else []
+            if isinstance(urls, list):
+                extra = [str(url).strip() for url in urls if str(url).strip() and str(url).strip() != fallback]
+        except (OSError, json.JSONDecodeError):
+            extra = []
+    return [fallback, *extra]
+
+
+def _read_limited(url: str) -> bytes:
+    if not is_allowed_catalog_url(url):
+        raise RuntimeError("Refused a catalog URL that is not https on an allowed host.")
+    if catalog_allow_local() and url.startswith("/") and "://" not in url:
+        data = Path(url).read_bytes()
+        if len(data) > COMMUNITY_INDEX_MAX_BYTES:
+            raise RuntimeError("That catalog index is larger than the 1 MB limit.")
+        return data
+    if catalog_allow_local() and url.startswith("file:"):
+        data = Path(urllib.parse.urlparse(url).path).read_bytes()
+        if len(data) > COMMUNITY_INDEX_MAX_BYTES:
+            raise RuntimeError("That catalog index is larger than the 1 MB limit.")
+        return data
+    request = urllib.request.Request(url, headers={"User-Agent": "Natural-Voice-Reader", "Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        final = str(response.geturl() or url)
+        if not is_allowed_catalog_url(final):
+            raise RuntimeError("The catalog index redirected to a host that is not allowed.")
+        length = response.headers.get("Content-Length")
+        if length and int(length) > COMMUNITY_INDEX_MAX_BYTES:
+            raise RuntimeError("That catalog index is larger than the 1 MB limit.")
+        data = response.read(COMMUNITY_INDEX_MAX_BYTES + 1)
+        if len(data) > COMMUNITY_INDEX_MAX_BYTES:
+            raise RuntimeError("That catalog index is larger than the 1 MB limit.")
+        return data
+
+
+def _community_pack_ok(pack: dict[str, Any]) -> bool:
+    if not isinstance(pack, dict) or not PACK_ID_RE.match(str(pack.get("id") or "")):
+        return False
+    source = pack.get("source") or {}
+    if not isinstance(source, dict):
+        return False
+    files = source.get("files") or []
+    if not isinstance(files, list) or not files:
+        return False
+    if not all(isinstance(item, dict) and SHA256_RE.match(str(item.get("sha256") or "")) for item in files):
+        return False
+    if source.get("kind") == "tarball":
+        return isinstance(source.get("url"), str) and is_allowed_catalog_url(str(source.get("url")))
+    if source.get("kind") == "huggingface":
+        return isinstance(source.get("repo"), str) and HF_REPO_RE.match(str(source.get("repo")))
+    return False
+
+
+def load_community_packs() -> tuple[list[dict[str, Any]], list[str]]:
+    official, _ = load_catalog()
+    reserved = official_ids(official)
+    packs: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    seen: set[str] = set()
+    for url in read_catalog_index_urls():
+        try:
+            doc = json.loads(_read_limited(url).decode("utf-8"))
+        except Exception as err:
+            warnings.append(f"{url}: {err}")
+            continue
+        if not isinstance(doc, dict) or doc.get("version") != 1 or not isinstance(doc.get("packs"), list):
+            warnings.append(f"{url}: catalog version must be 1 with a packs array.")
+            continue
+        for pack in doc.get("packs") or []:
+            if not _community_pack_ok(pack if isinstance(pack, dict) else {}):
+                warnings.append(f"{url}: skipped a pack that failed community validation.")
+                continue
+            pack_id = str(pack["id"])
+            if pack_id in reserved:
+                warnings.append(f"{url}: ignored reserved official id '{pack_id}'.")
+                continue
+            if pack_id in seen:
+                continue
+            seen.add(pack_id)
+            item = dict(pack)
+            item["_index"] = url
+            packs.append(item)
+    return packs, warnings
+
+
+def write_community_overlay(pack: dict[str, Any]) -> Path:
+    directory = overlay_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"community-{pack['id']}.json"
+    payload = {
+        "version": 1,
+        "packs": [
+            {
+                "id": pack["id"],
+                "name": pack.get("name"),
+                "description": pack.get("description"),
+                "engine": pack.get("engine"),
+                "installByDefault": False,
+                "commercialUse": pack.get("commercialUse"),
+                "license": pack.get("license"),
+                "licenseNote": pack.get("licenseNote"),
+                "sizeBytes": pack.get("sizeBytes"),
+                "source": pack.get("source"),
+                "voices": pack.get("voices") or [],
+                "community": True,
+            }
+        ],
+    }
+    write_json(path, payload)
+    return path
+
+
+def _matches_query(pack: dict[str, Any], query: str) -> bool:
+    if not query:
+        return True
+    hay = " ".join(
+        [
+            str(pack.get("id") or ""),
+            str(pack.get("name") or ""),
+            str(pack.get("description") or ""),
+            str(pack.get("engine") or ""),
+            str(pack.get("license") or ""),
+            " ".join(
+                str(voice.get(key) or "")
+                for voice in pack.get("voices") or []
+                if isinstance(voice, dict)
+                for key in ("id", "name", "language", "accent", "note", "gender")
+            ),
+        ]
+    ).lower()
+    return query in hay
+
+
+def cmd_browse(query: str, as_json: bool) -> int:
+    packs, warnings = load_community_packs()
+    local, _ = load_catalog()
+    local_ids = {str(pack.get("id")) for pack in local}
+    query = (query or "").strip().lower()
+    matched = [pack for pack in packs if _matches_query(pack, query)]
+    if as_json:
+        print(json.dumps({"packs": matched, "warnings": warnings}, indent=2))
+        return 0
+    if warnings:
+        for warning in warnings:
+            print(warning, file=sys.stderr)
+    if not matched:
+        print("No community packs matched." if query else "No community packs were listed.")
+        return 0
+    for pack in matched:
+        pack_id = str(pack.get("id"))
+        size = format_size(pack.get("sizeBytes") or 0)
+        license_id = pack.get("license") or "unknown"
+        flag = "installed" if pack_id in local_ids and pack_present(pack) else ("in library" if pack_id in local_ids else "available")
+        commercial = "" if pack.get("commercialUse") else "  (non-commercial)"
+        print(f"{pack_id:24}  {pack.get('name')}  {size}  {license_id}  {flag}{commercial}")
+    print("Install with: nvr voices install <id>")
+    return 0
+
+
+def prepare_pack(pack_id: str) -> dict[str, Any]:
+    if not PACK_ID_RE.match(pack_id):
+        raise SystemExit(f"Refused pack id '{pack_id}'.")
+    packs, _warnings = load_catalog()
+    for pack in packs:
+        if pack.get("id") == pack_id:
+            return pack
+    community, warnings = load_community_packs()
+    for pack in community:
+        if pack.get("id") == pack_id:
+            write_community_overlay(pack)
+            return get_pack(pack_id)
+    extra = f" ({'; '.join(warnings)})" if warnings else ""
+    raise SystemExit(f"Unknown voice pack '{pack_id}'. Use an id from the catalog, an overlay, or nvr voices browse.{extra}")
+
+
 def cmd_check(pack_id: str) -> int:
     pack = get_pack(pack_id)
     if pack_present(pack):
@@ -512,6 +765,9 @@ def main() -> int:
     rem.add_argument("--status-file")
     chk = sub.add_parser("check", help="Exit 0 if a pack is present on disk.")
     chk.add_argument("id")
+    brw = sub.add_parser("browse", help="Search the community catalog index.")
+    brw.add_argument("query", nargs="?", default="")
+    brw.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if args.cmd == "list":
         return cmd_list(args.json)
@@ -521,6 +777,8 @@ def main() -> int:
         return cmd_remove(args.id, args.status_file)
     if args.cmd == "check":
         return cmd_check(args.id)
+    if args.cmd == "browse":
+        return cmd_browse(args.query, args.json)
     return 2
 
 

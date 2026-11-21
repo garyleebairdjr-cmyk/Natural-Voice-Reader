@@ -4,14 +4,20 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
+  COMMUNITY_INDEX_MAX_BYTES,
+  DEFAULT_CATALOG_HOSTS,
+  DEFAULT_COMMUNITY_INDEX_URL,
+  isAllowedCatalogUrl,
   isPackId,
   mergeCatalogs,
   parseCatalog,
+  parseCommunityCatalog,
   type CatalogIssue,
   type VoicePack,
   type VoicePackProgress,
+  type CommunityBrowsePack,
   type VoicePackStatus,
 } from "./voice-packs.ts";
 
@@ -246,3 +252,199 @@ export function listPackStatus(): { packs: VoicePackStatus[]; errors: CatalogIss
   return { packs: listed, errors };
 }
 
+
+export function catalogAllowLocal(): boolean {
+  const value = process.env.NVR_CATALOG_ALLOW_LOCAL?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+export function defaultCommunityIndex(): string {
+  return process.env.NVR_COMMUNITY_INDEX?.trim() || DEFAULT_COMMUNITY_INDEX_URL;
+}
+
+export function catalogIndexesPath(): string {
+  if (process.env.NVR_CATALOG_INDEXES?.trim()) return process.env.NVR_CATALOG_INDEXES.trim();
+  if (process.platform === "win32") {
+    const base = process.env.APPDATA?.trim() || process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Roaming");
+    return join(base, "nvr", "catalog-indexes.json");
+  }
+  return join(process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config"), "nvr", "catalog-indexes.json");
+}
+
+type IndexFile = { version: 1; urls: string[] };
+
+function readIndexFile(): IndexFile {
+  const path = catalogIndexesPath();
+  if (!existsSync(path)) return { version: 1, urls: [] };
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<IndexFile>;
+    const urls = Array.isArray(raw.urls) ? raw.urls.filter((url): url is string => typeof url === "string" && url.trim() !== "") : [];
+    return { version: 1, urls };
+  } catch {
+    return { version: 1, urls: [] };
+  }
+}
+
+function writeIndexFile(file: IndexFile): void {
+  const path = catalogIndexesPath();
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ version: 1, urls: file.urls }, null, 2) + "\n", "utf8");
+  renameSync(tmp, path);
+}
+
+export function readCatalogIndexUrls(): string[] {
+  const fallback = defaultCommunityIndex();
+  const extra = readIndexFile().urls.filter((url) => url !== fallback);
+  return [fallback, ...extra];
+}
+
+export function addCatalogIndexUrl(url: string): string[] {
+  if (!isAllowedCatalogUrl(url, { allowLocal: catalogAllowLocal() })) {
+    throw new Error("Catalog URLs must be https on an allowed host such as github.com or huggingface.co.");
+  }
+  const fallback = defaultCommunityIndex();
+  if (url === fallback) return readCatalogIndexUrls();
+  const file = readIndexFile();
+  if (!file.urls.includes(url)) file.urls.push(url);
+  writeIndexFile(file);
+  return readCatalogIndexUrls();
+}
+
+export function removeCatalogIndexUrl(url: string): string[] {
+  if (url === defaultCommunityIndex()) {
+    throw new Error("The default community catalog cannot be removed.");
+  }
+  const file = readIndexFile();
+  file.urls = file.urls.filter((item) => item !== url);
+  writeIndexFile(file);
+  return readCatalogIndexUrls();
+}
+
+function assertIndexUrl(url: string): void {
+  if (!isAllowedCatalogUrl(url, { allowLocal: catalogAllowLocal(), hosts: DEFAULT_CATALOG_HOSTS })) {
+    throw new Error("Refused a catalog URL that is not https on an allowed host.");
+  }
+}
+
+async function readIndexPayload(url: string): Promise<unknown> {
+  const allowLocal = catalogAllowLocal();
+  assertIndexUrl(url);
+  if (allowLocal && url.startsWith("/") && !url.includes("://")) {
+    const buf = readFileSync(url);
+    if (buf.byteLength > COMMUNITY_INDEX_MAX_BYTES) {
+      throw new Error("That catalog index is larger than the 1 MB limit.");
+    }
+    return JSON.parse(buf.toString("utf8"));
+  }
+  if (allowLocal && url.startsWith("file:")) {
+    const path = new URL(url).pathname;
+    const buf = readFileSync(path);
+    if (buf.byteLength > COMMUNITY_INDEX_MAX_BYTES) {
+      throw new Error("That catalog index is larger than the 1 MB limit.");
+    }
+    return JSON.parse(buf.toString("utf8"));
+  }
+  const response = await fetch(url, {
+    redirect: "follow",
+    headers: { "user-agent": "Natural-Voice-Reader", accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`Could not fetch the catalog index (${response.status}).`);
+  }
+  const finalUrl = response.url || url;
+  if (!isAllowedCatalogUrl(finalUrl, { allowLocal, hosts: DEFAULT_CATALOG_HOSTS })) {
+    throw new Error("The catalog index redirected to a host that is not allowed.");
+  }
+  const length = Number(response.headers.get("content-length") || 0);
+  if (length > COMMUNITY_INDEX_MAX_BYTES) {
+    throw new Error("That catalog index is larger than the 1 MB limit.");
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > COMMUNITY_INDEX_MAX_BYTES) {
+    throw new Error("That catalog index is larger than the 1 MB limit.");
+  }
+  return JSON.parse(buffer.toString("utf8"));
+}
+
+export type CommunityIndexResult = {
+  url: string;
+  packs: VoicePack[];
+  errors: CatalogIssue[];
+};
+
+export async function fetchCommunityIndex(url: string): Promise<CommunityIndexResult> {
+  assertIndexUrl(url);
+  try {
+    const raw = await readIndexPayload(url);
+    const parsed = parseCommunityCatalog(raw, url, { allowLocal: catalogAllowLocal() });
+    return { url, packs: parsed.packs, errors: parsed.errors };
+  } catch (err) {
+    return {
+      url,
+      packs: [],
+      errors: [{ path: url, message: err instanceof Error ? err.message : "Could not read that catalog index." }],
+    };
+  }
+}
+
+export async function listCommunityPacks(): Promise<{ packs: CommunityBrowsePack[]; errors: CatalogIssue[]; urls: string[] }> {
+  const official = loadOfficialCatalog();
+  const officialIds = new Set(official.packs.map((pack) => pack.id));
+  const local = loadMergedCatalog();
+  const localIds = new Set(local.packs.map((pack) => pack.id));
+  const state = readInstallState();
+  const urls = readCatalogIndexUrls();
+  const errors: CatalogIssue[] = [...official.errors, ...local.errors];
+  const seen = new Set<string>();
+  const packs: CommunityBrowsePack[] = [];
+  for (const url of urls) {
+    const result = await fetchCommunityIndex(url);
+    errors.push(...result.errors);
+    for (const pack of result.packs) {
+      if (officialIds.has(pack.id)) {
+        errors.push({ path: url, message: `Community pack "${pack.id}" is ignored because that id is reserved by the official catalog.` });
+        continue;
+      }
+      if (seen.has(pack.id)) continue;
+      seen.add(pack.id);
+      const localPack = local.packs.find((item) => item.id === pack.id);
+      packs.push({
+        ...pack,
+        indexUrl: url,
+        inLibrary: localIds.has(pack.id),
+        installed: localPack ? isPackInstalled(localPack, state) : false,
+      });
+    }
+  }
+  return { packs, errors, urls };
+}
+
+export function writeCommunityOverlay(pack: VoicePack): string {
+  const dir = overlayDir();
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `community-${pack.id}.json`);
+  const doc = {
+    version: 1,
+    packs: [
+      {
+        id: pack.id,
+        name: pack.name,
+        description: pack.description,
+        engine: pack.engine,
+        installByDefault: false,
+        commercialUse: pack.commercialUse,
+        license: pack.license,
+        licenseNote: pack.licenseNote,
+        sizeBytes: pack.sizeBytes,
+        source: pack.source,
+        voices: pack.voices,
+        community: true,
+      },
+    ],
+  };
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n", "utf8");
+  renameSync(tmp, file);
+  return file;
+}

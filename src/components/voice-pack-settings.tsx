@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Loader2, Settings } from "lucide-react";
+import { Globe, Loader2, Settings } from "lucide-react";
+import { VoicePackBrowseDialog } from "@/components/voice-pack-browse";
 import { installVoicePack, listVoicePacks, removeVoicePack } from "@/lib/voice-packs.functions";
 import { formatPackSize, type VoicePackStatus } from "@/lib/voice-packs";
 
@@ -11,6 +12,7 @@ type Props = {
 export function VoicePackSettings({ packs, onChange }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [browseOpen, setBrowseOpen] = useState(false);
   const installing = packs.some((pack) => pack.installing);
 
   useEffect(() => {
@@ -52,13 +54,28 @@ export function VoicePackSettings({ packs, onChange }: Props) {
         <Settings className="size-4 text-muted" />
         <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Settings</h2>
       </div>
-      <h3 className="text-sm font-semibold text-fg">Voice packs</h3>
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="text-sm font-semibold text-fg">Voice packs</h3>
+        <button
+          type="button"
+          onClick={() => setBrowseOpen(true)}
+          className="inline-flex min-h-11 items-center gap-2 rounded-full border border-amber bg-amber px-3 text-xs font-semibold text-ink"
+        >
+          <Globe className="size-4" />
+          Browse
+        </button>
+      </div>
       <p className="text-xs leading-relaxed text-muted">
-        Install optional voices onto this computer. Only packs from the catalog or your
+        Install optional voices onto this computer. Only packs from the catalog, the community
+        index, or your
         {" "}
         <code className="text-fg">~/.config/nvr/voices.d</code> overlays can be added. You can also use
         {" "}
-        <code className="text-fg">nvr voices install &lt;id&gt;</code>.
+        <code className="text-fg">nvr voices install &lt;id&gt;</code>
+        {" "}
+        or
+        {" "}
+        <code className="text-fg">nvr voices browse</code>.
       </p>
       <ul className="flex flex-col gap-2">
         {packs.map((pack) => {
@@ -118,6 +135,7 @@ export function VoicePackSettings({ packs, onChange }: Props) {
           {error}
         </p>
       ) : null}
+      <VoicePackBrowseDialog open={browseOpen} onClose={() => setBrowseOpen(false)} onInstalled={onChange} />
     </section>
   );
 }

@@ -4,10 +4,13 @@ import {
   Link2,
   Loader2,
   Moon,
+  PanelRight,
+  PanelRightClose,
   Pause,
   Play,
   Plus,
   Repeat,
+  RotateCcw,
   SkipBack,
   SkipForward,
   Sun,
@@ -15,10 +18,11 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { Toaster, toast } from "sonner";
 import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.functions";
 import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
-import { effectiveGain, SPEED_OPTIONS, useLane } from "@/lib/lane-store";
+import { defaultLaneSettings, defaultSettingsOpen, effectiveGain, readLaneSettings, SETTINGS_BREAKPOINT, SPEED_OPTIONS, useLane } from "@/lib/lane-store";
 import { DEVICE_VOICE, canonicalVoiceId, isVoiceId, voiceAccentLabel, voiceById, voiceForCardIn, VOICES, type Voice } from "@/lib/voices";
 import { splitForStreaming } from "@/lib/sentences";
 import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
@@ -27,6 +31,8 @@ import { applyPlayback } from "@/lib/soft-room";
 import { listVoicePacks } from "@/lib/voice-packs.functions";
 import { voicesInInstalledPacks, type VoicePackStatus } from "@/lib/voice-packs";
 import { VoicePackSettings } from "@/components/voice-pack-settings";
+import { VoicePicker } from "@/components/voice-picker";
+import { VOICE_PREVIEW_LINE } from "@/lib/voice-picker";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
@@ -77,6 +83,11 @@ export function LaneApp() {
   const muted = useLane((s) => s.muted);
   const setVolume = useLane((s) => s.setVolume);
   const setMuted = useLane((s) => s.setMuted);
+  const settingsOpenPref = useLane((s) => s.settingsOpen);
+  const setSettingsOpen = useLane((s) => s.setSettingsOpen);
+  const favoriteVoiceIds = useLane((s) => s.favoriteVoiceIds);
+  const recentVoiceIds = useLane((s) => s.recentVoiceIds);
+  const toggleFavorite = useLane((s) => s.toggleFavorite);
   const setSpeed = useLane((s) => s.setSpeed);
   const setRepeat = useLane((s) => s.setRepeat);
   const theme = useLane((s) => s.theme);
@@ -105,6 +116,8 @@ export function LaneApp() {
   const [pieceIndex, setPieceIndex] = useState(0);
   const [pieceCount, setPieceCount] = useState(1);
   const [packs, setPacks] = useState<VoicePackStatus[] | null>(null);
+  const [wide, setWide] = useState(true);
+  const [confirmAction, setConfirmAction] = useState<null | "clear" | "reset">(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -112,13 +125,20 @@ export function LaneApp() {
   const installedVoices = useMemo(() => {
     if (!packs) return VOICES;
     const catalogVoices = voicesInInstalledPacks(packs);
-    return catalogVoices.map((item) => (isVoiceId(item.id) ? voiceById(item.id) : {
-      id: item.id,
-      name: item.name,
-      note: item.note ?? "",
-      language: item.language,
-      accent: item.accent,
-    }));
+    return catalogVoices.map((item) => {
+      if (isVoiceId(item.id)) {
+        const known = voiceById(item.id);
+        return { ...known, accent: item.accent ?? known.accent, gender: item.gender ?? known.gender };
+      }
+      return {
+        id: item.id,
+        name: item.name,
+        note: item.note ?? "",
+        language: item.language,
+        accent: item.accent,
+        gender: item.gender,
+      };
+    });
   }, [packs]);
 
   const availableEngines = useMemo(() => {
@@ -293,9 +313,34 @@ export function LaneApp() {
   }, []);
 
   useEffect(() => {
+    const media = window.matchMedia(SETTINGS_BREAKPOINT);
+    const sync = () => setWide(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  const settingsOpen = settingsOpenPref ?? defaultSettingsOpen(wide);
+  const pickerVoices = useMemo(() => [DEVICE_VOICE, ...installedVoices], [installedVoices]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "TEXTAREA" || tag === "INPUT") return;
+      const typing = tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT" || (e.target as HTMLElement | null)?.isContentEditable;
+      if ((e.key === "," && (e.ctrlKey || e.metaKey)) || (e.key === "," && !typing && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+        e.preventDefault();
+        setSettingsOpen(!settingsOpen);
+        return;
+      }
+      if (e.key === "Escape" && settingsOpen) {
+        const dialog = (e.target as HTMLElement | null)?.closest("[role='dialog'], [role='alertdialog']");
+        if (!dialog) {
+          e.preventDefault();
+          setSettingsOpen(false);
+          return;
+        }
+      }
+      if (typing) return;
       if (e.key === " " || e.code === "Space") {
         e.preventDefault();
         toggleRef.current();
@@ -309,7 +354,7 @@ export function LaneApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [settingsOpen, setSettingsOpen]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -840,6 +885,127 @@ export function LaneApp() {
     }
   }
 
+
+  async function previewVoice(voice: Voice) {
+    if (phaseRef.current === "playing" || phaseRef.current === "loading") pause();
+    const token = ++gen.current;
+    endedWaiter.current = null;
+    setAuditionId(voice.id);
+    setError(null);
+    setNote(null);
+    modeRef.current = "audition";
+    try {
+      if (voice.id === "device") {
+        await playDevice("This is a short preview of the device voice.", token, 1);
+        if (token !== gen.current) return;
+        setPhase("idle");
+        return;
+      }
+      const { url, speedApplied, key } = await ensureAudio(VOICE_PREVIEW_LINE, voice.id);
+      if (token !== gen.current) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+      speedAppliedRef.current = speedApplied;
+      audio.src = url;
+      loadedKey.current = key;
+      playingId.current = null;
+      audio.playbackRate = 1;
+      applyPlayback(audio, { softRoom: useLane.getState().softRoom, gain: effectiveGain(useLane.getState().volume, useLane.getState().muted) });
+      await audio.play();
+      if (token !== gen.current) {
+        audio.pause();
+        return;
+      }
+      setPhase("playing");
+      await waitForAudioEnd(token);
+      if (token === gen.current) setPhase("idle");
+    } catch (err) {
+      if (isAbort(err) || token !== gen.current) return;
+      setPhase("paused");
+      setError(err instanceof Error ? err.message : "Could not preview that voice.");
+    } finally {
+      if (token === gen.current) setAuditionId(null);
+    }
+  }
+
+  function settingsToggle() {
+    return (
+      <button
+        type="button"
+        onClick={() => setSettingsOpen(!settingsOpen)}
+        aria-pressed={settingsOpen}
+        aria-keyshortcuts=","
+        aria-label={settingsOpen ? "Hide settings" : "Show settings"}
+        title={settingsOpen ? "Hide settings (,)" : "Show settings (,)"}
+        className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-3 text-sm font-semibold text-fg"
+      >
+        {settingsOpen ? <PanelRightClose className="size-4" /> : <PanelRight className="size-4" />}
+        {settingsOpen ? "Hide settings" : "Settings"}
+      </button>
+    );
+  }
+
+  function voicePicker(compact: boolean) {
+    return (
+      <VoicePicker
+        voices={pickerVoices}
+        value={voiceId}
+        onChange={setVoice}
+        onPreview={(voice) => void previewVoice(voice)}
+        auditionId={auditionId}
+        favoriteIds={favoriteVoiceIds}
+        recentIds={recentVoiceIds}
+        onToggleFavorite={toggleFavorite}
+        ttsModel={ttsModel}
+        packs={packs}
+        compact={compact}
+      />
+    );
+  }
+
+  function askClearQueue() {
+    if (cards.length === 0) return;
+    setConfirmAction("clear");
+  }
+
+  function askResetSettings() {
+    setConfirmAction("reset");
+  }
+
+  function runClearQueue() {
+    const snapshot = { cards: useLane.getState().cards, index: useLane.getState().index };
+    pause();
+    clear();
+    setProgress(0);
+    loadedKey.current = null;
+    playingId.current = null;
+    setConfirmAction(null);
+    toast("Queue cleared", {
+      duration: 8000,
+      action: {
+        label: "Undo",
+        onClick: () => useLane.setState({ cards: snapshot.cards, index: snapshot.index }),
+      },
+    });
+  }
+
+  function runResetSettings() {
+    const snapshot = readLaneSettings(useLane.getState());
+    const defaults = defaultLaneSettings();
+    useLane.setState({
+      ...defaults,
+      settingsOpen: defaultSettingsOpen(wide),
+    });
+    setConfirmAction(null);
+    toast("Settings reset to defaults", {
+      duration: 8000,
+      action: {
+        label: "Undo",
+        onClick: () => useLane.setState(snapshot),
+      },
+    });
+  }
+
   function laneNote(count: number, mode: "append" | "replace", extra = "") {
     const noun = count === 1 ? "card" : "cards";
     const base = mode === "replace" ? `Queue replaced with ${count} ${noun}.` : `Added ${count} ${noun}.`;
@@ -977,6 +1143,7 @@ export function LaneApp() {
         >
           <SkipForward className="size-6" />
         </button>
+        {voicePicker(true)}
         <button
           type="button"
           onClick={() => void downloadCard(index)}
@@ -1027,14 +1194,25 @@ export function LaneApp() {
   }
 
   return (
-    <div className="mx-auto grid min-h-dvh max-w-6xl lg:grid-cols-5">
+    <div className="nvr-shell" data-settings={settingsOpen ? "open" : "collapsed"}>
       <audio ref={audioRef} preload="none" className="hidden" />
+      <Toaster theme={theme === "light" ? "light" : "dark"} position="bottom-center" richColors={false} />
+      <button
+        type="button"
+        className="nvr-backdrop"
+        aria-label="Close settings"
+        tabIndex={settingsOpen && !wide ? 0 : -1}
+        onClick={() => setSettingsOpen(false)}
+      />
 
-      <section className="flex min-w-0 flex-col gap-5 px-4 pt-5 pb-safe sm:px-6 lg:col-span-3 lg:px-8 lg:pt-8 lg:pb-8">
+      <section className="flex min-w-0 flex-col gap-5 px-4 pt-5 pb-safe sm:px-6 lg:px-8 lg:pt-8 lg:pb-8">
         <header className="flex flex-col gap-3">
-          <h1 className="font-display text-3xl leading-tight font-semibold text-balance text-fg sm:text-4xl">
-            Natural Web and Text Voice Reader
-          </h1>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <h1 className="font-display text-3xl leading-tight font-semibold text-balance text-fg sm:text-4xl">
+              Natural Web and Text Voice Reader
+            </h1>
+            {settingsToggle()}
+          </div>
           <p className="max-w-xl text-sm leading-relaxed text-muted">
             Choose the Audio voice and read along, and/or download the audio file. (browsers may have limited
             voice options)
@@ -1194,120 +1372,30 @@ export function LaneApp() {
           Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian English voices, then from xAI if a key is set.
           Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready.
         </p>
-      </section>
-
-      <aside className="flex min-w-0 flex-col gap-6 border-line px-4 py-6 pb-safe sm:px-6 lg:col-span-2 lg:max-h-dvh lg:overflow-y-auto lg:border-l lg:px-5 lg:py-8">
-        {packs ? <VoicePackSettings packs={packs} onChange={setPacks} /> : null}
-        <div>
-          <div className="mb-3 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Engine</h2>
-              <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Local voice engine">
-                {TTS_MODELS.map((model) => (
-                  <button
-                    key={model.id}
-                    type="button"
-                    onClick={() => setTtsModel(model.id)}
-                    aria-pressed={ttsModel === model.id}
-                    disabled={!availableEngines.includes(model.id)}
-                    title={!availableEngines.includes(model.id) ? "Install the OmniVoice pack in Settings to use this engine." : model.note}
-                    className={
-                      "min-h-11 rounded-full px-3 text-xs font-semibold " +
-                      (ttsModel === model.id ? "bg-amber text-ink" : "text-muted")
-                    }
-                  >
-                    {model.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Voices</h2>
-            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Voice mode">
-              <button
-                type="button"
-                onClick={() => setRotate(false)}
-                aria-pressed={!rotate}
-                className={
-                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
-                  (!rotate ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                One voice
-              </button>
-              <button
-                type="button"
-                onClick={() => setRotate(true)}
-                aria-pressed={rotate}
-                className={
-                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
-                  (rotate ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                Switch each post
-              </button>
-            </div>
-            </div>
-          </div>
-          <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
-            {[DEVICE_VOICE, ...installedVoices].map((voice) => {
-              const selected = voice.id === voiceId;
-              return (
-                <div
-                  key={voice.id}
-                  className={
-                    "flex min-w-44 shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 " +
-                    (selected ? "border-amber bg-raise" : "border-line bg-surface")
-                  }
-                >
-                  <button
-                    type="button"
-                    onClick={() => setVoice(voice.id)}
-                    className="min-h-11 flex-1 text-left"
-                  >
-                    <span className="block text-sm font-semibold text-fg">{voice.name}</span>
-                    <span className="block text-xs text-muted">{voice.note}</span>
-                    {voiceAccentLabel(voice) ? (
-                      <span className="block text-xs text-muted">{voiceAccentLabel(voice)}</span>
-                    ) : null}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Hear ${voice.name}`}
-                    onClick={() => void audition(voice)}
-                    className="inline-flex size-11 items-center justify-center rounded-full text-amber"
-                  >
-                    {auditionId === voice.id ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Volume2 className="size-4" />
-                    )}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Queue</h2>
-            <button
-              type="button"
-              onClick={() => {
-                pause();
-                clear();
-                setProgress(0);
-                loadedKey.current = null;
-                playingId.current = null;
-              }}
-              disabled={cards.length === 0}
-              className="text-xs font-semibold text-muted disabled:opacity-40"
-            >
-              Clear
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={askClearQueue}
+                disabled={cards.length === 0}
+                className="inline-flex min-h-11 items-center gap-2 rounded-full border border-danger px-3 text-xs font-semibold text-danger disabled:opacity-40"
+              >
+                <Trash2 className="size-4" />
+                Clear queue
+              </button>
+              <button
+                type="button"
+                onClick={askResetSettings}
+                className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-semibold text-fg"
+              >
+                <RotateCcw className="size-4" />
+                Reset to defaults
+              </button>
+            </div>
           </div>
-          <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto lg:max-h-none lg:flex-1">
+          <ul className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto lg:max-h-none">
             {cards.map((item, i) => {
               const active = i === index;
               const v = voiceForCardIn(installedVoices, i, voiceId, rotate);
@@ -1449,7 +1537,109 @@ export function LaneApp() {
           </div>
           {composerNote ? <p className="text-xs text-muted">{composerNote}</p> : null}
         </form>
+      </section>
+
+      <aside className="nvr-aside border-line lg:border-l" aria-label="Settings" aria-hidden={!settingsOpen && wide ? true : undefined}>
+        <div className="nvr-aside-inner flex min-h-full flex-col gap-6 px-4 py-6 pb-safe sm:px-6 lg:max-h-dvh lg:overflow-y-auto lg:px-5 lg:py-8">
+        <div className="flex items-center justify-between gap-3 lg:hidden">
+          <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Settings</h2>
+          <button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close settings" className="inline-flex size-11 items-center justify-center rounded-full border border-line text-fg">
+            <PanelRightClose className="size-4" />
+          </button>
+        </div>
+        {packs ? <VoicePackSettings packs={packs} onChange={setPacks} /> : null}
+        <div>
+          <div className="mb-3 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Engine</h2>
+              <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Local voice engine">
+                {TTS_MODELS.map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => setTtsModel(model.id)}
+                    aria-pressed={ttsModel === model.id}
+                    disabled={!availableEngines.includes(model.id)}
+                    title={!availableEngines.includes(model.id) ? "Install the OmniVoice pack in Settings to use this engine." : model.note}
+                    className={
+                      "min-h-11 rounded-full px-3 text-xs font-semibold " +
+                      (ttsModel === model.id ? "bg-amber text-ink" : "text-muted")
+                    }
+                  >
+                    {model.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Voices</h2>
+            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Voice mode">
+              <button
+                type="button"
+                onClick={() => setRotate(false)}
+                aria-pressed={!rotate}
+                className={
+                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
+                  (!rotate ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                One voice
+              </button>
+              <button
+                type="button"
+                onClick={() => setRotate(true)}
+                aria-pressed={rotate}
+                className={
+                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
+                  (rotate ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                Switch each post
+              </button>
+            </div>
+            </div>
+          </div>
+          {voicePicker(false)}
+        </div>
+
+        </div>
       </aside>
+      {confirmAction ? (
+        <div className="nvr-dialog-root" role="presentation">
+          <button type="button" className="nvr-dialog-backdrop" aria-label="Cancel" onClick={() => setConfirmAction(null)} />
+          <div className="nvr-dialog" role="alertdialog" aria-modal="true" aria-labelledby="nvr-confirm-title">
+            {confirmAction === "clear" ? (
+              <>
+                <h2 id="nvr-confirm-title" className="text-base font-semibold text-fg">Clear the queue?</h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted">
+                  This removes every card from the queue. Installed voice packs and your settings stay as they are. You can undo this.
+                </p>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button type="button" onClick={() => setConfirmAction(null)} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-sm font-semibold text-fg">Cancel</button>
+                  <button type="button" onClick={runClearQueue} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-danger bg-raise px-4 text-sm font-semibold text-danger">
+                    <Trash2 className="size-4" />
+                    Clear queue
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 id="nvr-confirm-title" className="text-base font-semibold text-fg">Reset settings to defaults?</h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted">
+                  This restores the voice, speed, volume, engine, and settings panel to their defaults. The queue and installed voice packs are not changed. You can undo this.
+                </p>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button type="button" onClick={() => setConfirmAction(null)} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-sm font-semibold text-fg">Cancel</button>
+                  <button type="button" onClick={runResetSettings} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-amber px-4 text-sm font-semibold text-ink">
+                    <RotateCcw className="size-4" />
+                    Reset to defaults
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

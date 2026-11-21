@@ -21,14 +21,21 @@ describe("voices", () => {
     assert.deepEqual([...REMOVED_VOICE_IDS], ["aiko", "haru", "lena", "jonas"]);
   });
 
-  it("migrates a saved removed or unknown voice to the default", () => {
+  it("migrates a saved removed or malformed voice to the default", () => {
     assert.equal(canonicalVoiceId("lena"), DEFAULT_VOICE_ID);
     assert.equal(canonicalVoiceId("aiko"), DEFAULT_VOICE_ID);
-    assert.equal(canonicalVoiceId("missing"), DEFAULT_VOICE_ID);
+    assert.equal(canonicalVoiceId("!!!"), DEFAULT_VOICE_ID);
     assert.equal(canonicalVoiceId("butler"), "butler");
     assert.equal(canonicalVoiceId("device"), "device");
     assert.equal(voiceById("jonas").id, DEFAULT_VOICE_ID);
     assert.equal(DEFAULT_VOICE_ID, "leo");
     assert.equal(voiceForCard(0, "haru", false).id, DEFAULT_VOICE_ID);
+  });
+
+  it("keeps well-formed community voice ids until a known list says otherwise", () => {
+    assert.equal(canonicalVoiceId("ljspeech"), "ljspeech");
+    assert.equal(canonicalVoiceId("ljspeech", ["leo", "ljspeech"]), "ljspeech");
+    assert.equal(canonicalVoiceId("ljspeech", ["leo", "eve"]), DEFAULT_VOICE_ID);
+    assert.equal(canonicalVoiceId("missing", ["leo"]), DEFAULT_VOICE_ID);
   });
 });

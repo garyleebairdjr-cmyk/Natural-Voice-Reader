@@ -8,10 +8,27 @@ import { canonicalVoiceId } from "@/lib/voices";
 import {
   clampVolume,
   DEFAULT_VOLUME,
+  MAX_FAVORITE_VOICES,
+  MAX_RECENT_VOICES,
   migrateLaneState,
+  normalizeVoiceIdList,
+  rememberRecentVoice,
+  toggleFavoriteVoice,
 } from "@/lib/lane-persist";
 
-export { clampVolume, DEFAULT_VOLUME, effectiveGain, migrateLaneState } from "@/lib/lane-persist";
+export {
+  clampVolume,
+  DEFAULT_VOLUME,
+  defaultLaneSettings,
+  defaultSettingsOpen,
+  effectiveGain,
+  migrateLaneState,
+  readLaneSettings,
+  rememberRecentVoice,
+  SETTINGS_BREAKPOINT,
+  toggleFavoriteVoice,
+  type LaneSettingsSnapshot,
+} from "@/lib/lane-persist";
 
 export const SPEED_OPTIONS = [
   { value: 0.9, label: "Slow" },
@@ -35,12 +52,18 @@ type LaneState = {
   theme: ThemeName;
   ink: string;
   seeded: boolean;
+  settingsOpen: boolean | null;
+  favoriteVoiceIds: string[];
+  recentVoiceIds: string[];
   setVoice: (id: string) => void;
   setRotate: (rotate: boolean) => void;
   setTtsModel: (model: TtsModelId) => void;
   setSoftRoom: (softRoom: boolean) => void;
   setVolume: (volume: number) => void;
   setMuted: (muted: boolean) => void;
+  setSettingsOpen: (open: boolean) => void;
+  toggleSettings: () => void;
+  toggleFavorite: (id: string) => void;
   setSpeed: (speed: Speed) => void;
   setRepeat: (repeat: boolean) => void;
   setTheme: (theme: ThemeName) => void;
@@ -86,12 +109,30 @@ export const useLane = create<LaneState>()(
       theme: "dark",
       ink: defaultInk("dark"),
       seeded: true,
-      setVoice: (voiceId) => set({ voiceId: canonicalVoiceId(voiceId) }),
+      settingsOpen: null,
+      favoriteVoiceIds: [],
+      recentVoiceIds: [],
+      setVoice: (voiceId) => {
+        const id = canonicalVoiceId(voiceId);
+        set((state) => ({
+          voiceId: id,
+          recentVoiceIds: rememberRecentVoice(state.recentVoiceIds, id),
+        }));
+      },
       setRotate: (rotate) => set({ rotate }),
       setTtsModel: (ttsModel) => set({ ttsModel: isTtsModelId(ttsModel) ? ttsModel : DEFAULT_VOICESTUDIO_MODEL }),
       setSoftRoom: (softRoom) => set({ softRoom }),
       setVolume: (volume) => set({ volume: clampVolume(volume), muted: false }),
       setMuted: (muted) => set({ muted: Boolean(muted) }),
+      setSettingsOpen: (settingsOpen) => set({ settingsOpen: Boolean(settingsOpen) }),
+      toggleSettings: () =>
+        set((state) => ({
+          settingsOpen: !(state.settingsOpen ?? true),
+        })),
+      toggleFavorite: (id) =>
+        set((state) => ({
+          favoriteVoiceIds: toggleFavoriteVoice(state.favoriteVoiceIds, id),
+        })),
       setSpeed: (speed) => set({ speed }),
       setRepeat: (repeat) => set({ repeat }),
       setTheme: (theme) => set({ theme }),
@@ -119,7 +160,7 @@ export const useLane = create<LaneState>()(
     {
       name: "lane-reader",
       skipHydration: true,
-      version: 5,
+      version: 6,
       migrate: migrateLaneState,
       partialize: (s) => ({
         cards: s.cards,
@@ -135,6 +176,9 @@ export const useLane = create<LaneState>()(
         theme: s.theme,
         ink: s.ink,
         seeded: s.seeded,
+        settingsOpen: typeof s.settingsOpen === "boolean" ? s.settingsOpen : null,
+        favoriteVoiceIds: normalizeVoiceIdList(s.favoriteVoiceIds, MAX_FAVORITE_VOICES),
+        recentVoiceIds: normalizeVoiceIdList(s.recentVoiceIds, MAX_RECENT_VOICES),
       }),
     },
   ),

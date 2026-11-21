@@ -3,8 +3,28 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createServerFn } from "@tanstack/react-start";
-import { isPackId, packById, type CatalogIssue, type VoicePackStatus } from "./voice-packs.ts";
-import { listPackStatus, loadMergedCatalog, readProgress, repoRoot, statusFilePath } from "./voice-packs.server.ts";
+import {
+  filterCommunityPacks,
+  isAllowedCatalogUrl,
+  isPackId,
+  packById,
+  type CatalogIssue,
+  type CommunityBrowsePack,
+  type VoicePackStatus,
+} from "./voice-packs.ts";
+import {
+  addCatalogIndexUrl,
+  catalogAllowLocal,
+  listCommunityPacks,
+  listPackStatus,
+  loadMergedCatalog,
+  readCatalogIndexUrls,
+  readProgress,
+  removeCatalogIndexUrl,
+  repoRoot,
+  statusFilePath,
+  writeCommunityOverlay,
+} from "./voice-packs.server.ts";
 
 export type VoicePackListResult = {
   packs: VoicePackStatus[];
@@ -104,6 +124,92 @@ export const removeVoicePack = createServerFn({ method: "POST" })
     const result = await runPackCommand(["remove", data.id, "--status-file", statusFilePath()]);
     if (result.code !== 0) {
       throw new Error(result.output || "Could not remove that voice pack.");
+    }
+    return listPackStatus();
+  });
+
+export type CommunityBrowseResult = {
+  packs: CommunityBrowsePack[];
+  errors: CatalogIssue[];
+  urls: string[];
+};
+
+export const listCatalogIndexes = createServerFn({ method: "GET" }).handler(async () => {
+  return { urls: readCatalogIndexUrls() };
+});
+
+export const addCatalogIndex = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const raw = input as { url?: unknown };
+    if (typeof raw.url !== "string" || !raw.url.trim()) {
+      throw new Error("Enter a catalog URL.");
+    }
+    const url = raw.url.trim();
+    if (!isAllowedCatalogUrl(url, { allowLocal: catalogAllowLocal() })) {
+      throw new Error("Catalog URLs must be https on an allowed host such as github.com or huggingface.co.");
+    }
+    return { url };
+  })
+  .handler(async ({ data }) => {
+    return { urls: addCatalogIndexUrl(data.url) };
+  });
+
+export const removeCatalogIndex = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const raw = input as { url?: unknown };
+    if (typeof raw.url !== "string" || !raw.url.trim()) {
+      throw new Error("Missing catalog URL.");
+    }
+    return { url: raw.url.trim() };
+  })
+  .handler(async ({ data }) => {
+    return { urls: removeCatalogIndexUrl(data.url) };
+  });
+
+export const browseVoicePacks = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const raw = (input ?? {}) as Record<string, unknown>;
+    const gender = raw.gender === "male" || raw.gender === "female" || raw.gender === "neutral" ? raw.gender as "male" | "female" | "neutral" : undefined;
+    const commercialUse = raw.commercialUse === true ? true : raw.commercialUse === false ? false : undefined;
+    return {
+      query: typeof raw.query === "string" ? raw.query : "",
+      language: typeof raw.language === "string" ? raw.language : "",
+      gender,
+      license: typeof raw.license === "string" ? raw.license : "",
+      commercialUse,
+    };
+  })
+  .handler(async ({ data }): Promise<CommunityBrowseResult> => {
+    const result = await listCommunityPacks();
+    return {
+      packs: filterCommunityPacks(result.packs, data) as CommunityBrowsePack[],
+      errors: result.errors,
+      urls: result.urls,
+    };
+  });
+
+export const installCommunityPack = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const raw = input as { id?: unknown };
+    if (!isPackId(raw.id)) {
+      throw new Error("That is not a valid voice pack id.");
+    }
+    return { id: raw.id };
+  })
+  .handler(async ({ data }): Promise<VoicePackListResult> => {
+    const listed = await listCommunityPacks();
+    const pack = listed.packs.find((item) => item.id === data.id);
+    if (!pack) {
+      throw new Error("Unknown community pack. Refresh the catalog and try again.");
+    }
+    writeCommunityOverlay(pack);
+    const progress = readProgress();
+    if (progress && (progress.state === "downloading" || progress.state === "verifying" || progress.state === "removing") && progress.packId !== data.id) {
+      throw new Error(`Another pack (${progress.packId}) is already being changed. Try again when it finishes.`);
+    }
+    const result = await runPackCommand(["install", data.id, "--status-file", statusFilePath()]);
+    if (result.code !== 0) {
+      throw new Error(result.output || "Could not install that voice pack.");
     }
     return listPackStatus();
   });

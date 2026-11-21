@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "piper-en-us-ljspeech",
+      "name": "LJ Speech (Piper)",
+      "description": "US English female voice trained from scratch on the public-domain LJ Speech dataset. Piper medium int8. A Piper-capable helper is needed to speak this pack.",
+      "engine": "piper",
+      "installByDefault": false,
+      "commercialUse": true,
+      "license": "LicenseRef-Public-Domain",
+      "licenseNote": "MODEL_CARD: LJ Speech dataset, public domain; trained from scratch. Packaged as a sherpa-onnx Piper int8 tarball from GitHub.",
+      "sizeBytes": 37347875,
+      "source": {
+        "kind": "tarball",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-medium-int8.tar.bz2",
+        "dirName": "vits-piper-en_US-ljspeech-medium-int8",
+        "files": [
+          {
+            "name": "en_US-ljspeech-medium.onnx",
+            "sha256": "206a8403baad4df7642156918a6ebe205798290d82f24d0d0119d7afa8a2738e"
+          },
+          {
+            "name": "en_US-ljspeech-medium.onnx.json",
+            "sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860"
+          },
+          {
+            "name": "tokens.txt",
+            "sha256": "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
+          }
+        ]
+      },
+      "voices": [
+        {
+          "id": "ljspeech",
+          "name": "LJ Speech",
+          "note": "US English, female. Public domain. Piper medium.",
+          "language": "en-US",
+          "accent": "american",
+          "gender": "female"
+        }
+      ]
+    },
+    {
+      "id": "piper-en-us-libritts",
+      "name": "LibriTTS (Piper)",
+      "description": "US English multi-speaker voice trained from scratch on LibriTTS train-clean-360 (CC BY 4.0). Piper high int8. A Piper-capable helper is needed to speak this pack.",
+      "engine": "piper",
+      "installByDefault": false,
+      "commercialUse": true,
+      "license": "CC-BY-4.0",
+      "licenseNote": "MODEL_CARD: LibriTTS (OpenSLR 60), CC BY 4.0, trained from scratch. Attribution required. Not the lessac-tuned libritts_r model, which was skipped.",
+      "sizeBytes": 59030135,
+      "source": {
+        "kind": "tarball",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-libritts-high-int8.tar.bz2",
+        "dirName": "vits-piper-en_US-libritts-high-int8",
+        "files": [
+          {
+            "name": "en_US-libritts-high.onnx",
+            "sha256": "6f4b435f3b3c7b98997d86162f740a18fa357773f3e432324b772e2d4fbb8370"
+          },
+          {
+            "name": "en_US-libritts-high.onnx.json",
+            "sha256": "2efdc6d7f954588b8180132cbd9b8001933fdd00932c92bc92fd0d2028a9eb3d"
+          },
+          {
+            "name": "tokens.txt",
+            "sha256": "42d1a69ed2b91a51928a711aa228ed9f3dc021c6d359a3e9c4f37eb1d20f80bd"
+          }
+        ]
+      },
+      "voices": [
+        {
+          "id": "libritts",
+          "name": "LibriTTS",
+          "note": "US English, 904 speakers. CC BY 4.0. Piper high.",
+          "language": "en-US",
+          "accent": "american",
+          "gender": "neutral"
+        }
+      ]
+    }
+  ]
+}
