@@ -1,7 +1,6 @@
 {
   "name": "natural-voice-reader",
   "description": "A browser-based text and web page reader with voice playback and audio downloads.",
-  "private": true,
   "sideEffects": false,
   "type": "module",
   "overrides": {
@@ -94,5 +93,6 @@
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.2.0"
-  }
+  },
+  "license": "MIT"
 }

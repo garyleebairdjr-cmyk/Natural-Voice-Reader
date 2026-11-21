@@ -125,3 +125,7 @@ npm run build
 - The project includes optional authentication and database infrastructure.
   Enabling authentication outside the hosted preview requires the appropriate
   OAuth client credentials, an auth URL, and a PostgreSQL `DATABASE_URL`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party engines and voice models keep their own licenses, listed in [THIRD_PARTY.md](THIRD_PARTY.md). VoiceStudio (AGPL-3.0) is a separate download and is not included here, and the OmniVoice weights are non-commercial only.
