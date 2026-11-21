@@ -13,16 +13,17 @@ import {
   Sun,
   Trash2,
   Volume2,
+  VolumeX,
 } from "lucide-react";
 import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.functions";
 import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
-import { SPEED_OPTIONS, useLane } from "@/lib/lane-store";
+import { effectiveGain, SPEED_OPTIONS, useLane } from "@/lib/lane-store";
 import { DEVICE_VOICE, voiceAccentLabel, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
 import { splitForStreaming } from "@/lib/sentences";
 import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
 import { resolveSpeechRoute } from "@/lib/voice-routing";
-import { applySoftRoom } from "@/lib/soft-room";
+import { applyPlayback } from "@/lib/soft-room";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
@@ -69,6 +70,10 @@ export function LaneApp() {
   const setTtsModel = useLane((s) => s.setTtsModel);
   const softRoom = useLane((s) => s.softRoom);
   const setSoftRoom = useLane((s) => s.setSoftRoom);
+  const volume = useLane((s) => s.volume);
+  const muted = useLane((s) => s.muted);
+  const setVolume = useLane((s) => s.setVolume);
+  const setMuted = useLane((s) => s.setMuted);
   const setSpeed = useLane((s) => s.setSpeed);
   const setRepeat = useLane((s) => s.setRepeat);
   const theme = useLane((s) => s.theme);
@@ -98,6 +103,7 @@ export function LaneApp() {
   const [pieceCount, setPieceCount] = useState(1);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const gen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const prefetchAbort = useRef<AbortController[]>([]);
@@ -179,9 +185,11 @@ export function LaneApp() {
   }, [speed]);
 
   useEffect(() => {
+    const gain = effectiveGain(volume, muted);
     const audio = audioRef.current;
-    if (audio) applySoftRoom(audio, softRoom);
-  }, [softRoom]);
+    if (audio) applyPlayback(audio, { softRoom, gain });
+    if (utteranceRef.current) utteranceRef.current.volume = gain;
+  }, [softRoom, volume, muted]);
 
   useEffect(() => {
     let cancelled = false;
@@ -456,6 +464,8 @@ export function LaneApp() {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = Math.min(1.6, Math.max(0.6, rate));
+      utterance.volume = effectiveGain(useLane.getState().volume, useLane.getState().muted);
+      utteranceRef.current = utterance;
       const voices = window.speechSynthesis.getVoices();
       const picked =
         voices.find((v) => /^en/i.test(v.lang) && /natural|google|samantha|daniel|aria|jenny/i.test(v.name)) ??
@@ -473,6 +483,7 @@ export function LaneApp() {
       };
       utterance.onend = () => {
         clearKeep();
+        if (utteranceRef.current === utterance) utteranceRef.current = null;
         if (token !== gen.current) {
           reject(new DOMException("Aborted", "AbortError"));
           return;
@@ -481,6 +492,7 @@ export function LaneApp() {
       };
       utterance.onerror = (event) => {
         clearKeep();
+        if (utteranceRef.current === utterance) utteranceRef.current = null;
         if (event.error === "interrupted" || event.error === "canceled") {
           reject(new DOMException("Aborted", "AbortError"));
           return;
@@ -535,7 +547,7 @@ export function LaneApp() {
         loadedKey.current = key;
       }
       audio.playbackRate = speedApplied ? 1 : useLane.getState().speed;
-      applySoftRoom(audio, useLane.getState().softRoom);
+      applyPlayback(audio, { softRoom: useLane.getState().softRoom, gain: effectiveGain(useLane.getState().volume, useLane.getState().muted) });
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
@@ -598,7 +610,7 @@ export function LaneApp() {
       loadedKey.current = first.key;
       audio.playbackRate = first.speedApplied ? 1 : useLane.getState().speed;
       prefetchUpcoming(pieces, 0, nextIndex, voice.id);
-      applySoftRoom(audio, useLane.getState().softRoom);
+      applyPlayback(audio, { softRoom: useLane.getState().softRoom, gain: effectiveGain(useLane.getState().volume, useLane.getState().muted) });
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
@@ -695,7 +707,7 @@ export function LaneApp() {
       !audio.ended
     ) {
       audio.playbackRate = speedAppliedRef.current ? 1 : state.speed;
-      applySoftRoom(audio, useLane.getState().softRoom);
+      applyPlayback(audio, { softRoom: useLane.getState().softRoom, gain: effectiveGain(useLane.getState().volume, useLane.getState().muted) });
       void audio.play().then(() => {
         setPhase("playing");
         void holdScreen();
@@ -761,7 +773,7 @@ export function LaneApp() {
       loadedKey.current = key;
       playingId.current = null;
       audio.playbackRate = speedApplied ? 1 : 1;
-      applySoftRoom(audio, useLane.getState().softRoom);
+      applyPlayback(audio, { softRoom: useLane.getState().softRoom, gain: effectiveGain(useLane.getState().volume, useLane.getState().muted) });
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
@@ -929,6 +941,38 @@ export function LaneApp() {
           )}
           Download
         </button>
+        <div className="inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-2">
+          <button
+            type="button"
+            aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
+            aria-pressed={muted || volume === 0}
+            title={muted || volume === 0 ? "Unmute" : "Mute"}
+            onClick={() => setMuted(!(muted || volume === 0))}
+            className={
+              "inline-flex size-11 items-center justify-center rounded-full " +
+              (muted || volume === 0 ? "text-muted" : "text-amber")
+            }
+          >
+            {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+          </button>
+          <input
+            type="range"
+            className="nvr-volume w-24 sm:w-28"
+            min={0}
+            max={100}
+            step={1}
+            value={volume}
+            onChange={(event) => setVolume(Number(event.target.value))}
+            aria-label="Volume"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={volume}
+            aria-valuetext={muted ? `Muted, ${volume} percent` : `${volume} percent`}
+          />
+          <span className="w-9 pr-1 text-xs font-semibold tabular-nums text-muted" aria-hidden="true">
+            {muted ? "Mute" : `${volume}%`}
+          </span>
+        </div>
       </div>
     );
   }

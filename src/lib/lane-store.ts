@@ -5,6 +5,13 @@ import { defaultInk, type ThemeName } from "@/lib/appearance";
 import { SAMPLE_LANE } from "@/lib/samples";
 import { DEFAULT_VOICESTUDIO_MODEL, isTtsModelId, type TtsModelId } from "@/lib/tts-config";
 import { canonicalVoiceId } from "@/lib/voices";
+import {
+  clampVolume,
+  DEFAULT_VOLUME,
+  migrateLaneState,
+} from "@/lib/lane-persist";
+
+export { clampVolume, DEFAULT_VOLUME, effectiveGain, migrateLaneState } from "@/lib/lane-persist";
 
 export const SPEED_OPTIONS = [
   { value: 0.9, label: "Slow" },
@@ -21,6 +28,8 @@ type LaneState = {
   rotate: boolean;
   ttsModel: TtsModelId;
   softRoom: boolean;
+  volume: number;
+  muted: boolean;
   speed: Speed;
   repeat: boolean;
   theme: ThemeName;
@@ -30,6 +39,8 @@ type LaneState = {
   setRotate: (rotate: boolean) => void;
   setTtsModel: (model: TtsModelId) => void;
   setSoftRoom: (softRoom: boolean) => void;
+  setVolume: (volume: number) => void;
+  setMuted: (muted: boolean) => void;
   setSpeed: (speed: Speed) => void;
   setRepeat: (repeat: boolean) => void;
   setTheme: (theme: ThemeName) => void;
@@ -68,6 +79,8 @@ export const useLane = create<LaneState>()(
       rotate: false,
       ttsModel: DEFAULT_VOICESTUDIO_MODEL,
       softRoom: false,
+      volume: DEFAULT_VOLUME,
+      muted: false,
       speed: 1,
       repeat: false,
       theme: "dark",
@@ -77,6 +90,8 @@ export const useLane = create<LaneState>()(
       setRotate: (rotate) => set({ rotate }),
       setTtsModel: (ttsModel) => set({ ttsModel: isTtsModelId(ttsModel) ? ttsModel : DEFAULT_VOICESTUDIO_MODEL }),
       setSoftRoom: (softRoom) => set({ softRoom }),
+      setVolume: (volume) => set({ volume: clampVolume(volume), muted: false }),
+      setMuted: (muted) => set({ muted: Boolean(muted) }),
       setSpeed: (speed) => set({ speed }),
       setRepeat: (repeat) => set({ repeat }),
       setTheme: (theme) => set({ theme }),
@@ -104,21 +119,8 @@ export const useLane = create<LaneState>()(
     {
       name: "lane-reader",
       skipHydration: true,
-      version: 4,
-      migrate: (persisted, version) => {
-        const state = persisted as Record<string, unknown>;
-        let next = state;
-        if (version < 2) {
-          next = { ...next, ttsModel: DEFAULT_VOICESTUDIO_MODEL };
-        }
-        if (version < 3) {
-          next = { ...next, softRoom: false };
-        }
-        if (version < 4) {
-          next = { ...next, voiceId: canonicalVoiceId(next.voiceId) };
-        }
-        return next;
-      },
+      version: 5,
+      migrate: migrateLaneState,
       partialize: (s) => ({
         cards: s.cards,
         index: s.index,
@@ -126,6 +128,8 @@ export const useLane = create<LaneState>()(
         rotate: s.rotate,
         ttsModel: isTtsModelId(s.ttsModel) ? s.ttsModel : DEFAULT_VOICESTUDIO_MODEL,
         softRoom: Boolean(s.softRoom),
+        volume: clampVolume(s.volume),
+        muted: Boolean(s.muted),
         speed: s.speed,
         repeat: s.repeat,
         theme: s.theme,

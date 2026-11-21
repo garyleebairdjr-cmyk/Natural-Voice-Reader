@@ -10,6 +10,7 @@ type Graph = {
   wet: GainNode;
   filter: BiquadFilterNode;
   convolver: ConvolverNode;
+  master: GainNode;
 };
 
 const graphs = new WeakMap<HTMLAudioElement, Graph>();
@@ -49,25 +50,42 @@ function graphFor(audio: HTMLAudioElement): Graph {
   source.connect(filter);
   filter.connect(convolver);
   convolver.connect(wet);
-  dry.connect(ctx.destination);
-  wet.connect(ctx.destination);
-  const graph = { ctx, source, dry, wet, filter, convolver };
+  const master = ctx.createGain();
+  dry.connect(master);
+  wet.connect(master);
+  master.connect(ctx.destination);
+  const graph = { ctx, source, dry, wet, filter, convolver, master };
   graphs.set(audio, graph);
   return graph;
 }
 
-export function applySoftRoom(audio: HTMLAudioElement, enabled: boolean): void {
+export function applyPlayback(
+  audio: HTMLAudioElement,
+  options: { softRoom: boolean; gain: number },
+): void {
   if (typeof window === "undefined") return;
+  const gain = Number.isFinite(options.gain) ? Math.min(1, Math.max(0, options.gain)) : 1;
   try {
-    if (!enabled && !graphs.has(audio)) return;
+    if (!options.softRoom && !graphs.has(audio)) {
+      audio.muted = gain === 0;
+      audio.volume = gain;
+      return;
+    }
     const graph = graphFor(audio);
     if (graph.ctx.state === "suspended") {
       void graph.ctx.resume();
     }
     // Subtle mix: mostly dry, a little room, no obvious wash.
-    graph.dry.gain.value = enabled ? 0.92 : 1;
-    graph.wet.gain.value = enabled ? 0.16 : 0;
+    graph.dry.gain.value = options.softRoom ? 0.92 : 1;
+    graph.wet.gain.value = options.softRoom ? 0.16 : 0;
+    // Once a MediaElementSource exists, element volume is unreliable, so
+    // the master gain is the live volume control for this path.
+    audio.muted = false;
+    audio.volume = 1;
+    graph.master.gain.value = gain;
   } catch {
-    // If Web Audio is blocked, playback still works through the element.
+    audio.muted = gain === 0;
+    audio.volume = gain;
   }
 }
+
