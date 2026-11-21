@@ -1194,9 +1194,10 @@ export function LaneApp() {
   }
 
   return (
-    <div className="nvr-shell" data-settings={settingsOpen ? "open" : "collapsed"}>
+    <>
       <audio ref={audioRef} preload="none" className="hidden" />
       <Toaster theme={theme === "light" ? "light" : "dark"} position="bottom-center" richColors={false} />
+      <div className="nvr-shell" data-settings={settingsOpen ? "open" : "collapsed"}>
       <button
         type="button"
         className="nvr-backdrop"
@@ -1205,10 +1206,10 @@ export function LaneApp() {
         onClick={() => setSettingsOpen(false)}
       />
 
-      <section className="flex min-w-0 flex-col gap-5 px-4 pt-5 pb-safe sm:px-6 lg:px-8 lg:pt-8 lg:pb-8">
+      <section className="nvr-main flex min-w-0 flex-col gap-5 px-4 pt-5 pb-safe sm:px-6 lg:px-8 lg:pt-8 lg:pb-8">
         <header className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <h1 className="font-display text-3xl leading-tight font-semibold text-balance text-fg sm:text-4xl">
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="min-w-0 flex-1 font-display text-3xl leading-tight font-semibold text-balance text-fg sm:text-4xl">
               Natural Web and Text Voice Reader
             </h1>
             {settingsToggle()}
@@ -1604,6 +1605,7 @@ export function LaneApp() {
 
         </div>
       </aside>
+      </div>
       {confirmAction ? (
         <div className="nvr-dialog-root" role="presentation">
           <button type="button" className="nvr-dialog-backdrop" aria-label="Cancel" onClick={() => setConfirmAction(null)} />
@@ -1640,6 +1642,6 @@ export function LaneApp() {
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }

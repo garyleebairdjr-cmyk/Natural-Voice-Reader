@@ -137,29 +137,49 @@ html[data-ink="forest"] { --color-read: #1d4a38; }
   display: grid;
   margin-inline: auto;
   min-height: 100dvh;
-  max-width: 72rem;
-  grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem);
-  transition: grid-template-columns 200ms ease;
+  width: 100%;
+  max-width: 90rem;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  grid-template-rows: minmax(100dvh, auto);
+  grid-template-areas: "main aside";
+  transition: grid-template-columns 200ms ease, max-width 200ms ease;
 }
 
 .nvr-shell[data-settings="collapsed"] {
+  max-width: 72rem;
   grid-template-columns: minmax(0, 1fr) 0fr;
 }
 
+.nvr-shell[data-settings="collapsed"] .nvr-aside {
+  visibility: hidden;
+  pointer-events: none;
+  border-color: transparent;
+}
+
+.nvr-main {
+  grid-area: main;
+  min-width: 0;
+}
+
 .nvr-aside {
+  grid-area: aside;
   min-width: 0;
   overflow: hidden;
 }
 
 .nvr-aside-inner {
   box-sizing: border-box;
-  width: 21rem;
+  width: 22rem;
   max-width: 100%;
   height: 100%;
 }
 
 .nvr-backdrop {
   display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  border: 0;
 }
 
 .nvr-dialog-root {
@@ -209,15 +229,13 @@ html[data-ink="forest"] { --color-read: #1d4a38; }
   .nvr-shell,
   .nvr-shell[data-settings="collapsed"],
   .nvr-shell[data-settings="open"] {
+    max-width: none;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main";
   }
 
   .nvr-backdrop {
     display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    border: 0;
     background: rgb(0 0 0 / 0.5);
     opacity: 0;
     pointer-events: none;
