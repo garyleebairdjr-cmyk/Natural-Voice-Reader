@@ -17,6 +17,8 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from nvr_paths import kokoro_model_dir
+
 # Official kokoro-multi-lang-v1_0 speaker ids used by the reader.
 # The on-disk pack still contains the full 54-speaker table; trimming
 # voices.bin is unsafe without regenerating model metadata.
@@ -26,7 +28,7 @@ VOICES = {
     "hm_omega": 33,
 }
 
-DEFAULT_CACHE = Path.home() / ".cache" / "nvr" / "sherpa" / "kokoro-int8-multi-lang-v1_0"
+DEFAULT_CACHE = kokoro_model_dir()
 
 _tts = None
 _model_dir = None

@@ -8,12 +8,77 @@ nvr_load_pins() {
   set +a
 }
 
+nvr_data_dir() {
+  if [[ -n "${NVR_DATA_HOME:-}" ]]; then
+    printf '%s\n' "${NVR_DATA_HOME}"
+    return
+  fi
+  case "$(uname -s 2>/dev/null || echo Linux)" in
+    Darwin)
+      printf '%s\n' "${HOME}/Library/Application Support/nvr"
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      printf '%s\n' "${LOCALAPPDATA:-${USERPROFILE}/AppData/Local}/nvr"
+      ;;
+    *)
+      printf '%s\n' "${XDG_DATA_HOME:-${HOME}/.local/share}/nvr"
+      ;;
+  esac
+}
+
+nvr_apply_data_env() {
+  local data
+  data="$(nvr_data_dir)"
+  export NVR_DATA_HOME="${data}"
+  if [[ -z "${NVR_SHERPA_CACHE:-}" ]]; then
+    export NVR_SHERPA_CACHE="${data}/sherpa"
+  fi
+  if [[ -z "${NVR_HF_HOME:-}" ]]; then
+    export NVR_HF_HOME="${data}/huggingface"
+  fi
+  # Only for this process and the VoiceStudio / Kokoro / reader children it starts.
+  export HF_HOME="${NVR_HF_HOME}"
+  export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
+  if [[ -z "${NVR_STATUS_FILE:-}" ]]; then
+    export NVR_STATUS_FILE="${data}/status.json"
+  fi
+  if [[ -z "${NVR_VOICE_STATE:-}" ]]; then
+    export NVR_VOICE_STATE="${data}/voice-packs.json"
+  fi
+  if [[ -z "${NVR_VOICE_STATUS:-}" ]]; then
+    export NVR_VOICE_STATUS="${data}/voice-pack-status.json"
+  fi
+  if [[ -z "${NVR_KOKORO_MODEL_DIR:-}" ]]; then
+    export NVR_KOKORO_MODEL_DIR="${NVR_SHERPA_CACHE}/${KOKORO_MODEL_DIR_NAME:-kokoro-int8-multi-lang-v1_0}"
+  fi
+}
+
+nvr_migrate_data() {
+  nvr_apply_data_env
+  local py=""
+  if [[ -n "${VS_ROOT:-}" ]]; then
+    py="$(nvr_vs_python "${VS_ROOT}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${py}" ]]; then
+    py="$(command -v python3 || true)"
+  fi
+  if [[ -z "${py}" ]]; then
+    py="$(command -v python || true)"
+  fi
+  local script
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/nvr_paths.py"
+  if [[ -n "${py}" && -f "${script}" ]]; then
+    "${py}" "${script}" migrate || printf '%s\n' "Warning: could not migrate voice data from the old cache location." >&2
+  fi
+}
+
 nvr_default_status_file() {
   if [[ -n "${NVR_STATUS_FILE:-}" ]]; then
     printf '%s\n' "${NVR_STATUS_FILE}"
     return
   fi
-  printf '%s\n' "${HOME}/.cache/nvr/status.json"
+  nvr_apply_data_env
+  printf '%s\n' "${NVR_STATUS_FILE}"
 }
 
 nvr_default_vs_root() {

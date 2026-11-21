@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { bootstrapStatusPath } from "@/lib/nvr-paths";
 import { createServerFn } from "@tanstack/react-start";
 import { isVoiceId } from "@/lib/voices";
 import { splitSpeakable, VOICESTUDIO_MAX_CHARS } from "@/lib/sentences";
@@ -22,15 +21,6 @@ import {
   voiceStudioVoice,
 } from "@/lib/tts-config";
 
-
-function bootstrapStatusPath(): string {
-  if (process.env.NVR_STATUS_FILE?.trim()) return process.env.NVR_STATUS_FILE.trim();
-  if (process.platform === "win32") {
-    const base = process.env.LOCALAPPDATA?.trim() || process.env.USERPROFILE?.trim() || homedir();
-    return join(base, "nvr", "status.json");
-  }
-  return join(homedir(), ".cache", "nvr", "status.json");
-}
 
 function readBootstrapStatus(): TtsDownloadProgress | null {
   const path = bootstrapStatusPath();

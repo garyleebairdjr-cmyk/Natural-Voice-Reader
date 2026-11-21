@@ -12,6 +12,7 @@ import {
   type CommunityBrowsePack,
   type VoicePackStatus,
 } from "./voice-packs.ts";
+import { applyProcessEnv, migrateLegacyData } from "./nvr-paths.ts";
 import {
   addCatalogIndexUrl,
   catalogAllowLocal,
@@ -61,9 +62,11 @@ function runPackCommand(args: string[]): Promise<{ code: number; output: string 
     return Promise.resolve({ code: 2, output: "The voice pack manager script is missing." });
   }
   return new Promise((resolve, reject) => {
+    migrateLegacyData();
     const child = spawn(packManagerPython(), [script, ...args], {
       env: {
         ...process.env,
+        ...applyProcessEnv(),
         NVR_ROOT: repoRoot(),
       },
       stdio: ["ignore", "pipe", "pipe"],

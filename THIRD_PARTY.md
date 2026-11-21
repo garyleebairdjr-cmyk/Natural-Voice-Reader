@@ -35,6 +35,7 @@ If you later open-source or distribute this reader:
 
 Piper `en_GB-alan-medium` was used only as a private comparison sample for the butler search. It is not a product voice: its model card points at Mycroft `apope_low` with a "See URL" license, which is not clear enough to ship.
 
+Installed weights are stored in the per-user data directory (`~/.local/share/nvr` on Linux, `~/Library/Application Support/nvr` on macOS, `%LOCALAPPDATA%\nvr` on Windows), not in the shared Hugging Face cache. `nvr` sets `HF_HOME` only for the processes it launches.
 
 ## Other runtime libraries (via VoiceStudio)
 

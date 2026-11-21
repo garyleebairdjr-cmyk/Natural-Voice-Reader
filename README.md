@@ -39,7 +39,7 @@ Sage, and Violet) tint the controls in both modes.
 The script-based bootstrap checks for Node.js 22+, uv, Python 3.11, the
 reader's npm dependencies, and a pinned VoiceStudio checkout. Missing pieces
 are installed. KittenTTS weights download on demand from Hugging Face into
-the per-user cache, with progress shown in the reader UI. That is the only
+the per-user data directory, with progress shown in the reader UI. That is the only
 pack the installer adds by default. Optional packs such as Kokoro (Butler and
 Indian English) and OmniVoice are installed later from **Settings > Voice packs**
 or with `nvr voices install <id>`. OmniVoice weights are larger and CC-BY-NC
@@ -154,10 +154,24 @@ nvr voices browse
 nvr voices browse ljspeech
 ```
 
-Downloads go into the per-user cache, are verified when checksums are in the
-catalog, and can be removed to free disk space. The UI and the CLI only accept
-pack ids from the official catalog, a validated community index, or your
-overlays. They will not fetch an arbitrary URL from the client.
+Downloads go into the per-user data directory, are verified when checksums are
+in the catalog, and can be removed to free disk space:
+
+- Linux: `$XDG_DATA_HOME/nvr` (default `~/.local/share/nvr`)
+- macOS: `~/Library/Application Support/nvr`
+- Windows: `%LOCALAPPDATA%\nvr`
+
+Sherpa packs (Kokoro) land in `sherpa/` under that directory. Hugging Face
+packs (KittenTTS, OmniVoice) use a private `huggingface/` tree there; `nvr`
+sets `HF_HOME` only for VoiceStudio, the Kokoro helper, and other processes it
+starts, so other apps keep their own Hugging Face cache. A one-time migration
+moves any existing files out of `~/.cache/nvr` and our pack folders under
+`~/.cache/huggingface` (it does not copy, and it leaves unrelated Hugging Face
+repos alone). You can point everything at a custom root with `NVR_DATA_HOME`.
+Overlay catalogs stay in the config directory (`~/.config/nvr/voices.d` on
+Linux). The UI and the CLI only accept pack ids from the official catalog, a
+validated community index, or your overlays. They will not fetch an arbitrary
+URL from the client.
 
 ### Community packs
 

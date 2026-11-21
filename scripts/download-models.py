@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download KittenTTS or OmniVoice weights into a Hugging Face cache, with progress."""
+"""Download KittenTTS or OmniVoice weights into the NVR data directory, with progress."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import json
 import os
 import sys
 from pathlib import Path
+
+from nvr_paths import apply_process_env, bootstrap_status_path, hf_hub_dir, hf_repo_slug, migrate_legacy_data, sherpa_cache
 
 PINS = {
     "kittentts": {
@@ -38,12 +40,7 @@ PINS = {
 def status_path(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit)
-    if os.environ.get("NVR_STATUS_FILE"):
-        return Path(os.environ["NVR_STATUS_FILE"])
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.environ.get("USERPROFILE") or str(Path.home())
-        return Path(base) / "nvr" / "status.json"
-    return Path.home() / ".cache" / "nvr" / "status.json"
+    return bootstrap_status_path()
 
 
 def write_status(path: Path, **payload: object) -> None:
@@ -54,10 +51,18 @@ def write_status(path: Path, **payload: object) -> None:
 
 
 
-def sherpa_cache() -> Path:
-    if os.environ.get("NVR_SHERPA_CACHE"):
-        return Path(os.environ["NVR_SHERPA_CACHE"]).expanduser()
-    return Path.home() / ".cache" / "nvr" / "sherpa"
+
+def hf_snapshot_present(repo: str, cache_dir: str) -> bool:
+    base = Path(cache_dir) / hf_repo_slug(repo)
+    refs = base / "refs" / "main"
+    if refs.is_file():
+        sha = refs.read_text(encoding="utf-8").strip()
+        if sha and (base / "snapshots" / sha).is_dir():
+            return True
+    snaps = base / "snapshots"
+    if snaps.is_dir() and any(child.is_dir() for child in snaps.iterdir()):
+        return True
+    return False
 
 
 def kokoro_ready(spec: dict) -> bool:
@@ -95,9 +100,11 @@ def download_tarball(spec: dict, status: Path, label: str) -> None:
 
 
 def main() -> int:
+    apply_process_env()
+    migrate_legacy_data()
     parser = argparse.ArgumentParser(description="Download Natural Voice Reader TTS weights.")
     parser.add_argument("--model", choices=sorted(PINS), default="kittentts")
-    parser.add_argument("--cache-dir", default=os.environ.get("HF_HOME") or os.environ.get("HUGGINGFACE_HUB_CACHE"))
+    parser.add_argument("--cache-dir", default=None, help="Hugging Face hub cache (defaults to $NVR_DATA_HOME/huggingface/hub).")
     parser.add_argument("--status-file", default=None)
     parser.add_argument("--check", action="store_true", help="Exit 0 if the model is already cached.")
     args = parser.parse_args()
@@ -106,7 +113,7 @@ def main() -> int:
     repo = spec.get("repo") or spec.get("url") or args.model
     label = spec["label"]
     status = status_path(args.status_file)
-    cache_dir = args.cache_dir
+    cache_dir = args.cache_dir or str(hf_hub_dir())
 
     if spec.get("kind") == "tarball":
         if args.check:
@@ -161,6 +168,9 @@ def main() -> int:
             return result
 
     if args.check:
+        if hf_snapshot_present(str(repo), cache_dir):
+            print(f"{label} is already in the cache.")
+            return 0
         try:
             if spec["files"]:
                 for name in spec["files"]:

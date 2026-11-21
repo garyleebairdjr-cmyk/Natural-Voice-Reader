@@ -13,7 +13,15 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PinsPath = Join-Path $ScriptDir "pins.env"
 $NvrRoot = if ($env:NVR_ROOT) { $env:NVR_ROOT } else { (Resolve-Path (Join-Path $ScriptDir "..")).Path }
 $VsRoot = if ($env:VOICESTUDIO_ROOT) { $env:VOICESTUDIO_ROOT } else { Join-Path $env:LOCALAPPDATA "nvr\VoiceStudio" }
-$StatusFile = if ($env:NVR_STATUS_FILE) { $env:NVR_STATUS_FILE } else { Join-Path $env:LOCALAPPDATA "nvr\status.json" }
+$DataDir = if ($env:NVR_DATA_HOME) { $env:NVR_DATA_HOME } else { Join-Path $env:LOCALAPPDATA "nvr" }
+if (-not $env:NVR_DATA_HOME) { $env:NVR_DATA_HOME = $DataDir }
+if (-not $env:NVR_SHERPA_CACHE) { $env:NVR_SHERPA_CACHE = Join-Path $DataDir "sherpa" }
+if (-not $env:NVR_HF_HOME) { $env:NVR_HF_HOME = Join-Path $DataDir "huggingface" }
+$env:HF_HOME = $env:NVR_HF_HOME
+$env:HUGGINGFACE_HUB_CACHE = Join-Path $env:HF_HOME "hub"
+$StatusFile = if ($env:NVR_STATUS_FILE) { $env:NVR_STATUS_FILE } else { Join-Path $DataDir "status.json" }
+$env:NVR_STATUS_FILE = $StatusFile
+if (-not $env:NVR_KOKORO_MODEL_DIR) { $env:NVR_KOKORO_MODEL_DIR = Join-Path $env:NVR_SHERPA_CACHE "kokoro-int8-multi-lang-v1_0" }
 
 $pins = @{}
 Get-Content $PinsPath | ForEach-Object {
@@ -110,6 +118,18 @@ if (Test-Path (Join-Path $NvrRoot "node_modules")) {
 # --- Models ---
 $VsPython = Join-Path $VsRoot ".venv\Scripts\python.exe"
 $Packs = Join-Path $ScriptDir "voice-packs.py"
+$PathsPy = Join-Path $ScriptDir "nvr_paths.py"
+if ((Test-Path $PathsPy) -and (Test-Command "python")) {
+    $py = if ($env:VOICESTUDIO_ROOT -and (Test-Path (Join-Path $env:VOICESTUDIO_ROOT ".venv\Scripts\python.exe"))) {
+        Join-Path $env:VOICESTUDIO_ROOT ".venv\Scripts\python.exe"
+    } elseif (Test-Path (Join-Path $VsRoot ".venv\Scripts\python.exe")) {
+        Join-Path $VsRoot ".venv\Scripts\python.exe"
+    } else { "python" }
+    if (-not $DryRun) { & $py $PathsPy migrate }
+} elseif ($DryRun) {
+    Write-Plan "Move any legacy voice cache into $DataDir"
+}
+
 Write-Log "Checking the default KittenTTS voice pack..."
 if ((Test-Path $VsPython) -and (Test-Path $Packs)) {
     & $VsPython $Packs check kittentts

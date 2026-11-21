@@ -5,10 +5,17 @@ setlocal EnableExtensions
 if /I "%~1"=="voices" (
   set "NVR_ROOT=%~dp0.."
   if not defined VOICESTUDIO_ROOT set "VOICESTUDIO_ROOT=%LOCALAPPDATA%\nvr\VoiceStudio"
+  if not defined NVR_DATA_HOME set "NVR_DATA_HOME=%LOCALAPPDATA%\nvr"
+  if not defined NVR_SHERPA_CACHE set "NVR_SHERPA_CACHE=%NVR_DATA_HOME%\sherpa"
+  if not defined NVR_HF_HOME set "NVR_HF_HOME=%NVR_DATA_HOME%\huggingface"
+  set "HF_HOME=%NVR_HF_HOME%"
+  set "HUGGINGFACE_HUB_CACHE=%HF_HOME%\hub"
   set "VS_PY=%VOICESTUDIO_ROOT%\.venv\Scripts\python.exe"
   if exist "%VS_PY%" (
+    "%VS_PY%" "%~dp0nvr_paths.py" migrate
     "%VS_PY%" "%~dp0voice-packs.py" %2 %3 %4 %5 %6 %7 %8 %9
   ) else (
+    python "%~dp0nvr_paths.py" migrate
     python "%~dp0voice-packs.py" %2 %3 %4 %5 %6 %7 %8 %9
   )
   exit /b %ERRORLEVEL%
@@ -17,7 +24,13 @@ set "SCRIPT_DIR=%~dp0"
 set "NVR_ROOT=%SCRIPT_DIR%.."
 if not defined VOICESTUDIO_ROOT set "VOICESTUDIO_ROOT=%LOCALAPPDATA%\nvr\VoiceStudio"
 if not defined NVR_TTS_MODEL set "NVR_TTS_MODEL=kittentts"
-if not defined NVR_STATUS_FILE set "NVR_STATUS_FILE=%LOCALAPPDATA%\nvr\status.json"
+if not defined NVR_DATA_HOME set "NVR_DATA_HOME=%LOCALAPPDATA%\nvr"
+if not defined NVR_SHERPA_CACHE set "NVR_SHERPA_CACHE=%NVR_DATA_HOME%\sherpa"
+if not defined NVR_HF_HOME set "NVR_HF_HOME=%NVR_DATA_HOME%\huggingface"
+set "HF_HOME=%NVR_HF_HOME%"
+set "HUGGINGFACE_HUB_CACHE=%HF_HOME%\hub"
+if not defined NVR_STATUS_FILE set "NVR_STATUS_FILE=%NVR_DATA_HOME%\status.json"
+if not defined NVR_KOKORO_MODEL_DIR set "NVR_KOKORO_MODEL_DIR=%NVR_SHERPA_CACHE%\kokoro-int8-multi-lang-v1_0"
 if not defined VOICESTUDIO_URL set "VOICESTUDIO_URL=http://127.0.0.1:3900"
 if not defined KOKORO_URL set "KOKORO_URL=http://127.0.0.1:3901"
 if not defined NVR_CPU_THREADS set "NVR_CPU_THREADS=4"
@@ -34,6 +47,12 @@ if not exist "%VOICESTUDIO_ROOT%" (
   echo VoiceStudio was not found at %VOICESTUDIO_ROOT%.
   echo Run scripts\install.ps1 first.
   exit /b 1
+)
+
+if exist "%VOICESTUDIO_ROOT%\.venv\Scripts\python.exe" (
+  "%VOICESTUDIO_ROOT%\.venv\Scripts\python.exe" "%SCRIPT_DIR%nvr_paths.py" migrate
+) else (
+  python "%SCRIPT_DIR%nvr_paths.py" migrate
 )
 
 echo If ports 3900, 3901, or 8080 are already in use, close the old VoiceStudio, Kokoro, or reader window first.
@@ -74,7 +93,7 @@ if exist "%VS_PY%" (
     "%VS_PY%" "%SCRIPT_DIR%download-models.py" --model kokoro --status-file "%NVR_STATUS_FILE%"
   )
   echo Starting Kokoro helper on 127.0.0.1:3901...
-  start "Kokoro TTS" /MIN cmd /c "cd /d "%NVR_ROOT%" && "%VS_PY%" "%SCRIPT_DIR%kokoro-server.py" --host 127.0.0.1 --port 3901 >> %TEMP%\nvr-kokoro.log 2>&1"
+  start "Kokoro TTS" /MIN cmd /c "cd /d "%NVR_ROOT%" && "%VS_PY%" "%SCRIPT_DIR%kokoro-server.py" --host 127.0.0.1 --port 3901 --model-dir "%NVR_KOKORO_MODEL_DIR%" >> %TEMP%\nvr-kokoro.log 2>&1"
 )
 
 echo Pinning and warming %NVR_TTS_MODEL%...

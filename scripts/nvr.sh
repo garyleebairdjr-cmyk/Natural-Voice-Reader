@@ -22,6 +22,7 @@ export NVR_ROOT
 if [[ "${1:-}" == "voices" ]]; then
   shift
   VS_ROOT="$(nvr_default_vs_root)"
+  nvr_migrate_data
   py="$(nvr_vs_python "${VS_ROOT}")"
   if [[ -z "${py}" ]]; then
     py="$(command -v python3 || true)"
@@ -46,13 +47,15 @@ MODEL="${NVR_TTS_MODEL:-${VOICESTUDIO_TTS_MODEL:-kittentts}}"
 VS_LOG="${VS_LOG:-/tmp/voicestudio-api.log}"
 NVR_LOG="${NVR_LOG:-/tmp/nvr-dev.log}"
 KOKORO_LOG="${KOKORO_LOG:-/tmp/nvr-kokoro.log}"
-KOKORO_MODEL_DIR="${NVR_KOKORO_MODEL_DIR:-${HOME}/.cache/nvr/sherpa/${KOKORO_MODEL_DIR_NAME:-kokoro-int8-multi-lang-v1_0}}"
+nvr_migrate_data
+KOKORO_MODEL_DIR="${NVR_KOKORO_MODEL_DIR}"
 STATUS_FILE="$(nvr_default_status_file)"
 WARMUP_TEXT="The voice engine is ready."
 nvr_apply_thread_env
 log() {
   printf '%s\n' "$*"
 }
+log "Voice data directory is ${NVR_DATA_HOME}."
 log "Using ${NVR_CPU_THREADS} CPU threads for Torch/ONNX (NVR_CPU_THREADS)."
 
 VS_PID=""
@@ -224,6 +227,7 @@ log "Starting VoiceStudio API on ${VS_HOST}:${VS_PORT}..."
 (
   cd "${VS_ROOT}"
   # Do not set OMNIVOICE_TTS_BACKEND; it would lock the engine and ignore /engines/select.
+  # HF_HOME / HUGGINGFACE_HUB_CACHE already point at the NVR data dir for this process tree.
   exec uv run --no-sync uvicorn main:app --app-dir backend --host "${VS_HOST}" --port "${VS_PORT}"
 ) >>"${VS_LOG}" 2>&1 &
 VS_PID=$!

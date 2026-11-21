@@ -20,7 +20,8 @@ Usage: install.sh [--dry-run] [--with-omnivoice]
 
 Checks for, and if missing installs, Node.js 22+, uv, Python 3.11,
 Natural Voice Reader npm dependencies, and a pinned VoiceStudio checkout.
-KittenTTS (the default voice pack) downloads on demand into the Hugging Face cache.
+KittenTTS (the default voice pack) downloads on demand into the per-user data directory
+(~/.local/share/nvr on Linux, ~/Library/Application Support/nvr on macOS).
 Optional packs such as Kokoro and OmniVoice are installed later from Settings
 or with `nvr voices install <id>`. OmniVoice (several GB, CC-BY-NC) can also
 be fetched now with --with-omnivoice.
@@ -38,6 +39,7 @@ done
 
 NVR_ROOT="${NVR_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 VS_ROOT="$(nvr_default_vs_root)"
+nvr_apply_data_env
 STATUS_FILE="$(nvr_default_status_file)"
 UNAME="$(uname -s)"
 
@@ -256,6 +258,7 @@ fi
 # --- Models ---
 VS_PY="$(nvr_vs_python "${VS_ROOT}")"
 PACKS="${SCRIPT_DIR}/voice-packs.py"
+nvr_migrate_data
 log "Checking the default KittenTTS voice pack..."
 if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${PACKS}" check kittentts >/dev/null 2>&1; then
   skip "KittenTTS is already installed"

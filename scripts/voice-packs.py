@@ -18,6 +18,15 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from nvr_paths import (
+    apply_process_env,
+    hf_hub_dir,
+    migrate_legacy_data,
+    sherpa_cache,
+    state_path,
+    status_path,
+)
+
 PACK_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 HF_REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
@@ -40,45 +49,6 @@ def overlay_dir() -> Path:
         base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA") or str(Path.home())
         return Path(base) / "nvr" / "voices.d"
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nvr" / "voices.d"
-
-
-def state_path() -> Path:
-    if os.environ.get("NVR_VOICE_STATE"):
-        return Path(os.environ["NVR_VOICE_STATE"]).expanduser()
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.environ.get("USERPROFILE") or str(Path.home())
-        return Path(base) / "nvr" / "voice-packs.json"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "nvr" / "voice-packs.json"
-
-
-def status_path(explicit: str | None = None) -> Path:
-    if explicit:
-        return Path(explicit)
-    if os.environ.get("NVR_VOICE_STATUS"):
-        return Path(os.environ["NVR_VOICE_STATUS"]).expanduser()
-    if os.environ.get("NVR_STATUS_FILE"):
-        return Path(os.environ["NVR_STATUS_FILE"]).with_name("voice-pack-status.json")
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.environ.get("USERPROFILE") or str(Path.home())
-        return Path(base) / "nvr" / "voice-pack-status.json"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "nvr" / "voice-pack-status.json"
-
-
-def sherpa_cache() -> Path:
-    if os.environ.get("NVR_SHERPA_CACHE"):
-        return Path(os.environ["NVR_SHERPA_CACHE"]).expanduser()
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.environ.get("USERPROFILE") or str(Path.home())
-        return Path(base) / "nvr" / "sherpa"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "nvr" / "sherpa"
-
-
-def hf_hub_dir() -> Path:
-    if os.environ.get("HUGGINGFACE_HUB_CACHE"):
-        return Path(os.environ["HUGGINGFACE_HUB_CACHE"]).expanduser()
-    if os.environ.get("HF_HOME"):
-        return Path(os.environ["HF_HOME"]).expanduser() / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -410,6 +380,7 @@ def download_huggingface(pack: dict[str, Any], status: Path) -> Path:
                     repo_id=repo,
                     filename=name,
                     revision=revision,
+                    cache_dir=str(hf_hub_dir()),
                     tqdm_class=StatusTqdm,
                 )
             )
@@ -417,7 +388,7 @@ def download_huggingface(pack: dict[str, Any], status: Path) -> Path:
         root = last.parent
         verify_files(root, files, label)
         return root
-    snapshot_download(repo_id=repo, revision=revision, tqdm_class=StatusTqdm)
+    snapshot_download(repo_id=repo, revision=revision, cache_dir=str(hf_hub_dir()), tqdm_class=StatusTqdm)
     snap = hf_snapshot(repo, revision)
     if snap is None:
         raise RuntimeError(f"{label} downloaded but the snapshot was not found.")
@@ -753,6 +724,8 @@ def cmd_check(pack_id: str) -> int:
 
 
 def main() -> int:
+    apply_process_env()
+    migrate_legacy_data()
     parser = argparse.ArgumentParser(description="Manage Natural Voice Reader voice packs.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     list_p = sub.add_parser("list", help="List catalog packs and install state.")

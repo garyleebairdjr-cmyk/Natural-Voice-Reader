@@ -6,6 +6,16 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFile
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  applyProcessEnv,
+  huggingfaceHubDir,
+  migrateLegacyData,
+  sherpaCacheDir,
+  stateFilePath,
+  statusFilePath,
+} from "./nvr-paths.ts";
+
+export { sherpaCacheDir, stateFilePath, statusFilePath } from "./nvr-paths.ts";
+import {
   COMMUNITY_INDEX_MAX_BYTES,
   DEFAULT_CATALOG_HOSTS,
   DEFAULT_COMMUNITY_INDEX_URL,
@@ -38,45 +48,9 @@ export function overlayDir(): string {
   return join(process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config"), "nvr", "voices.d");
 }
 
-export function stateFilePath(): string {
-  if (process.env.NVR_VOICE_STATE?.trim()) return process.env.NVR_VOICE_STATE.trim();
-  if (process.platform === "win32") {
-    const base = process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Local");
-    return join(base, "nvr", "voice-packs.json");
-  }
-  return join(process.env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache"), "nvr", "voice-packs.json");
-}
-
-export function statusFilePath(): string {
-  if (process.env.NVR_VOICE_STATUS?.trim()) return process.env.NVR_VOICE_STATUS.trim();
-  if (process.env.NVR_STATUS_FILE?.trim()) {
-    // Keep progress next to the existing bootstrap status file.
-    return process.env.NVR_STATUS_FILE.trim().replace(/status\.json$/, "voice-pack-status.json");
-  }
-  if (process.platform === "win32") {
-    const base = process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Local");
-    return join(base, "nvr", "voice-pack-status.json");
-  }
-  return join(process.env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache"), "nvr", "voice-pack-status.json");
-}
-
-export function sherpaCacheDir(): string {
-  if (process.env.NVR_SHERPA_CACHE?.trim()) return process.env.NVR_SHERPA_CACHE.trim();
-  if (process.platform === "win32") {
-    const base = process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Local");
-    return join(base, "nvr", "sherpa");
-  }
-  return join(process.env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache"), "nvr", "sherpa");
-}
-
 function issue(path: string, message: string): CatalogIssue {
-  return { path, message };
-}
 
-function huggingfaceHubDir(): string {
-  if (process.env.HF_HOME?.trim()) return join(process.env.HF_HOME.trim(), "hub");
-  if (process.env.HUGGINGFACE_HUB_CACHE?.trim()) return process.env.HUGGINGFACE_HUB_CACHE.trim();
-  return join(homedir(), ".cache", "huggingface", "hub");
+  return { path, message };
 }
 
 function readJson(path: string): unknown {
@@ -236,6 +210,8 @@ export function readProgress(path = statusFilePath()): VoicePackProgress | null 
 }
 
 export function listPackStatus(): { packs: VoicePackStatus[]; errors: CatalogIssue[] } {
+  migrateLegacyData();
+  applyProcessEnv();
   const { packs, errors } = loadMergedCatalog();
   const state = readInstallState();
   const progress = readProgress();
