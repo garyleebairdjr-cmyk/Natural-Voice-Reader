@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "example-pack",
+      "name": "Example voice pack",
+      "description": "Copy this file to ~/.config/nvr/voices.d/ and edit it to add a pack. Pack ids must not collide with the official catalog.",
+      "engine": "piper",
+      "installByDefault": false,
+      "commercialUse": true,
+      "license": "MIT",
+      "sizeBytes": 20000000,
+      "source": {
+        "kind": "tarball",
+        "url": "https://example.com/voices/example-pack.tar.gz",
+        "dirName": "example-pack",
+        "files": [
+          { "name": "model.onnx", "sha256": "replace-with-the-real-sha256-hex" }
+        ]
+      },
+      "voices": [
+        {
+          "id": "example-voice",
+          "name": "Example",
+          "note": "A voice from a local catalog overlay.",
+          "language": "en",
+          "gender": "neutral"
+        }
+      ]
+    }
+  ]
+}

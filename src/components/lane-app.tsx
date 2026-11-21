@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   Link2,
@@ -19,11 +19,14 @@ import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.func
 import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
 import { effectiveGain, SPEED_OPTIONS, useLane } from "@/lib/lane-store";
-import { DEVICE_VOICE, voiceAccentLabel, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
+import { DEVICE_VOICE, canonicalVoiceId, isVoiceId, voiceAccentLabel, voiceById, voiceForCardIn, VOICES, type Voice } from "@/lib/voices";
 import { splitForStreaming } from "@/lib/sentences";
 import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
 import { resolveSpeechRoute } from "@/lib/voice-routing";
 import { applyPlayback } from "@/lib/soft-room";
+import { listVoicePacks } from "@/lib/voice-packs.functions";
+import { voicesInInstalledPacks, type VoicePackStatus } from "@/lib/voice-packs";
+import { VoicePackSettings } from "@/components/voice-pack-settings";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
@@ -101,9 +104,27 @@ export function LaneApp() {
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
   const [pieceIndex, setPieceIndex] = useState(0);
   const [pieceCount, setPieceCount] = useState(1);
+  const [packs, setPacks] = useState<VoicePackStatus[] | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  const installedVoices = useMemo(() => {
+    if (!packs) return VOICES;
+    const catalogVoices = voicesInInstalledPacks(packs);
+    return catalogVoices.map((item) => (isVoiceId(item.id) ? voiceById(item.id) : {
+      id: item.id,
+      name: item.name,
+      note: item.note ?? "",
+      language: item.language,
+      accent: item.accent,
+    }));
+  }, [packs]);
+
+  const availableEngines = useMemo(() => {
+    if (!packs) return TTS_MODELS.map((model) => model.id);
+    return TTS_MODELS.filter((model) => model.id !== "omnivoice" || packs.some((pack) => pack.id === "omnivoice" && pack.installed)).map((model) => model.id);
+  }, [packs]);
   const gen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const prefetchAbort = useRef<AbortController[]>([]);
@@ -119,16 +140,44 @@ export function LaneApp() {
   const phaseRef = useRef<Phase>("idle");
   phaseRef.current = phase;
   const card = cards[index];
-  const speaking = card ? voiceForCard(index, voiceId, rotate) : voiceById(voiceId);
+  const speaking = card ? voiceForCardIn(installedVoices, index, voiceId, rotate) : voiceById(voiceId);
 
   useEffect(() => {
     const finish = () => {
-      useLane.setState({ voiceId: "leo" });
+      const state = useLane.getState();
+      const next = canonicalVoiceId(state.voiceId);
+      if (next !== state.voiceId) useLane.setState({ voiceId: next });
     };
     const unsub = useLane.persist.onFinishHydration(finish);
     void useLane.persist.rehydrate();
     return unsub;
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listVoicePacks()
+      .then((result) => {
+        if (!cancelled) setPacks(result.packs);
+      })
+      .catch(() => {
+        if (!cancelled) setPacks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!packs) return;
+    const allowed = new Set(installedVoices.map((voice) => voice.id));
+    if (voiceId !== "device" && !allowed.has(voiceId)) {
+      const fallback = allowed.has("leo") ? "leo" : installedVoices[0]?.id ?? "device";
+      setVoice(fallback);
+    }
+    if (ttsModel === "omnivoice" && !availableEngines.includes("omnivoice")) {
+      setTtsModel("kittentts");
+    }
+  }, [packs, installedVoices, availableEngines, voiceId, ttsModel, setVoice, setTtsModel]);
 
   useEffect(() => {
     const activeInk = inkFits(theme, ink) ? ink : defaultInk(theme);
@@ -421,7 +470,7 @@ export function LaneApp() {
       const state = useLane.getState();
       const nextCard = state.cards[cardIndex + 1];
       if (nextCard && state.voiceId !== "device") {
-        const nextVoice = voiceForCard(cardIndex + 1, state.voiceId, state.rotate);
+        const nextVoice = voiceForCardIn(installedVoices, cardIndex + 1, state.voiceId, state.rotate);
         const nextPieces = splitForStreaming(nextCard.text);
         const need = 2 - upcoming.length;
         // Next card may use a different voice when rotation is on.
@@ -525,7 +574,7 @@ export function LaneApp() {
     void releaseScreen();
     const current = state.cards[fromIndex];
     if (current) {
-      publishSession(current.text, voiceForCard(fromIndex, state.voiceId, state.rotate).name, false);
+      publishSession(current.text, voiceForCardIn(installedVoices, fromIndex, state.voiceId, state.rotate).name, false);
     }
   }
   advanceRef.current = advanceAfter;
@@ -569,7 +618,7 @@ export function LaneApp() {
     endedWaiter.current = null;
     stopDevice();
     state.setIndex(nextIndex);
-    const voice = voiceForCard(nextIndex, state.voiceId, state.rotate);
+    const voice = voiceForCardIn(installedVoices, nextIndex, state.voiceId, state.rotate);
     setPhase("loading");
     setError(null);
     setNote(null);
@@ -680,7 +729,7 @@ export function LaneApp() {
     void releaseScreen();
     const state = useLane.getState();
     const current = state.cards[state.index];
-    if (current) publishSession(current.text, voiceForCard(state.index, state.voiceId, state.rotate).name, false);
+    if (current) publishSession(current.text, voiceForCardIn(installedVoices, state.index, state.voiceId, state.rotate).name, false);
   }
   const pauseRef = useRef(pause);
   pauseRef.current = pause;
@@ -693,7 +742,7 @@ export function LaneApp() {
       return;
     }
     const current = state.cards[state.index];
-    const voice = current ? voiceForCard(state.index, state.voiceId, state.rotate) : null;
+    const voice = current ? voiceForCardIn(installedVoices, state.index, state.voiceId, state.rotate) : null;
     const key = current && voice
       ? audioCacheKey(voice.id, splitForStreaming(current.text)[0] ?? current.text, state.ttsModel, state.speed)
       : null;
@@ -861,7 +910,7 @@ export function LaneApp() {
     const state = useLane.getState();
     const item = state.cards[cardIndex];
     if (!item) return;
-    const voice = voiceForCard(cardIndex, state.voiceId, state.rotate);
+    const voice = voiceForCardIn(installedVoices, cardIndex, state.voiceId, state.rotate);
     if (voice.id === "device") {
       setError("Device voices play in the browser and don't make a file. Choose Leo or another voice to download.");
       return;
@@ -1148,6 +1197,7 @@ export function LaneApp() {
       </section>
 
       <aside className="flex min-w-0 flex-col gap-6 border-line px-4 py-6 pb-safe sm:px-6 lg:col-span-2 lg:max-h-dvh lg:overflow-y-auto lg:border-l lg:px-5 lg:py-8">
+        {packs ? <VoicePackSettings packs={packs} onChange={setPacks} /> : null}
         <div>
           <div className="mb-3 flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1159,7 +1209,8 @@ export function LaneApp() {
                     type="button"
                     onClick={() => setTtsModel(model.id)}
                     aria-pressed={ttsModel === model.id}
-                    title={model.note}
+                    disabled={!availableEngines.includes(model.id)}
+                    title={!availableEngines.includes(model.id) ? "Install the OmniVoice pack in Settings to use this engine." : model.note}
                     className={
                       "min-h-11 rounded-full px-3 text-xs font-semibold " +
                       (ttsModel === model.id ? "bg-amber text-ink" : "text-muted")
@@ -1199,7 +1250,7 @@ export function LaneApp() {
             </div>
           </div>
           <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
-            {[DEVICE_VOICE, ...VOICES].map((voice) => {
+            {[DEVICE_VOICE, ...installedVoices].map((voice) => {
               const selected = voice.id === voiceId;
               return (
                 <div
@@ -1259,7 +1310,7 @@ export function LaneApp() {
           <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto lg:max-h-none lg:flex-1">
             {cards.map((item, i) => {
               const active = i === index;
-              const v = voiceForCard(i, voiceId, rotate);
+              const v = voiceForCardIn(installedVoices, i, voiceId, rotate);
               return (
                 <li key={item.id} className="flex items-stretch gap-2">
                   <button

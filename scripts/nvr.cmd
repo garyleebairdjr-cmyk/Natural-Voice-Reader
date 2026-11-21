@@ -2,6 +2,17 @@
 REM Cross-platform Windows launcher. UNTESTED on Windows.
 REM Starts VoiceStudio and Natural Voice Reader together.
 setlocal EnableExtensions
+if /I "%~1"=="voices" (
+  set "NVR_ROOT=%~dp0.."
+  if not defined VOICESTUDIO_ROOT set "VOICESTUDIO_ROOT=%LOCALAPPDATA%\nvr\VoiceStudio"
+  set "VS_PY=%VOICESTUDIO_ROOT%\.venv\Scripts\python.exe"
+  if exist "%VS_PY%" (
+    "%VS_PY%" "%~dp0voice-packs.py" %2 %3 %4 %5 %6 %7 %8 %9
+  ) else (
+    python "%~dp0voice-packs.py" %2 %3 %4 %5 %6 %7 %8 %9
+  )
+  exit /b %ERRORLEVEL%
+)
 set "SCRIPT_DIR=%~dp0"
 set "NVR_ROOT=%SCRIPT_DIR%.."
 if not defined VOICESTUDIO_ROOT set "VOICESTUDIO_ROOT=%LOCALAPPDATA%\nvr\VoiceStudio"

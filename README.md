@@ -20,11 +20,12 @@ browser.
 The script-based bootstrap checks for Node.js 22+, uv, Python 3.11, the
 reader's npm dependencies, and a pinned VoiceStudio checkout. Missing pieces
 are installed. KittenTTS weights download on demand from Hugging Face into
-the per-user cache, with progress shown in the reader UI. Kokoro (Apache-2.0)
-downloads by default into `~/.cache/nvr/sherpa` for Butler (British) and the
-Indian English voices. OmniVoice weights are larger and CC-BY-NC, so they
-download only with `--with-omnivoice` or when you later choose **Best quality
-(slow)**.
+the per-user cache, with progress shown in the reader UI. That is the only
+pack the installer adds by default. Optional packs such as Kokoro (Butler and
+Indian English) and OmniVoice are installed later from **Settings > Voice packs**
+or with `nvr voices install <id>`. OmniVoice weights are larger and CC-BY-NC
+(not for commercial use); `--with-omnivoice` still fetches that pack at install
+time if you want it immediately.
 
 Linux and macOS:
 
@@ -97,6 +98,43 @@ a minute; the reader shows "Loading voice engine" or a download percent
 instead of treating that wait as a failure. Never use `voxcpm2`. OmniVoice
 weights are CC-BY-NC (personal use only). A **Soft room** toggle adds a light
 playback-only room tone; downloads stay dry.
+
+
+## Voice packs
+
+The reader ships a catalog in `voices/catalog.json`. Each pack declares its
+engine, voices (with language, accent, and gender tags), download source,
+pinned revision, file checksums where feasible, size, SPDX license, and
+whether it may be used commercially. The current packs are:
+
+- **kittentts** — default, Apache-2.0, the standard English voices
+- **kokoro** — optional, Apache-2.0, Butler (British), Mira, and Arjun
+- **omnivoice** — optional, CC-BY-NC, enables **Best quality (slow)**
+
+Installed voices appear in the voice picker. Uninstalled packs stay in
+Settings as "Not installed" until you add them. The installer only places
+KittenTTS; everything else is on demand.
+
+```sh
+nvr voices list
+nvr voices install kokoro
+nvr voices remove kokoro
+```
+
+Downloads go into the per-user cache, are verified when checksums are in the
+catalog, and can be removed to free disk space. The UI and the CLI only accept
+pack ids from the catalog (or your overlays). They will not fetch an arbitrary
+URL from the client.
+
+### Adding your own packs
+
+Place a JSON file next to the official schema in `~/.config/nvr/voices.d/`
+(on Windows, `%APPDATA%\nvr\voices.d\`). See `voices/overlay.example.json`.
+Overlay files use the same catalog schema. New pack ids are merged in;
+overlay ids cannot replace an official pack. Supported source kinds today are
+`huggingface` and `tarball` (https only). Engines listed in the catalog can
+include `piper` and other extensions; speaking a custom engine still needs a
+compatible local helper.
 
 ## Roadmap
 

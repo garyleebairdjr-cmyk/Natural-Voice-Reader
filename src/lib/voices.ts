@@ -83,12 +83,17 @@ export function voiceById(id: string): Voice {
   return VOICES.find((v) => v.id === canonicalVoiceId(id)) ?? FALLBACK;
 }
 
-export function voiceForCard(index: number, voiceId: string, rotate: boolean): Voice {
+export function voiceForCardIn(voices: Voice[], index: number, voiceId: string, rotate: boolean): Voice {
+  if (voices.length === 0) return DEVICE_VOICE;
   const id = canonicalVoiceId(voiceId);
   if (id === DEVICE_VOICE.id) return DEVICE_VOICE;
-  const start = Math.max(0, VOICES.findIndex((v) => v.id === id));
-  if (!rotate) return VOICES[start] ?? FALLBACK;
-  return VOICES[(start + index) % VOICES.length] ?? FALLBACK;
+  const start = Math.max(0, voices.findIndex((v) => v.id === id));
+  if (!rotate) return voices[start] ?? voices[0] ?? DEVICE_VOICE;
+  return voices[(start + index) % voices.length] ?? voices[0] ?? DEVICE_VOICE;
+}
+
+export function voiceForCard(index: number, voiceId: string, rotate: boolean): Voice {
+  return voiceForCardIn(VOICES, index, voiceId, rotate);
 }
 
 export function voiceAccentLabel(voice: Voice): string | null {

@@ -109,51 +109,41 @@ if (Test-Path (Join-Path $NvrRoot "node_modules")) {
 
 # --- Models ---
 $VsPython = Join-Path $VsRoot ".venv\Scripts\python.exe"
-$Downloader = Join-Path $ScriptDir "download-models.py"
-Write-Log "Checking KittenTTS weights ($($pins.KITTEN_MODEL))..."
-if ((Test-Path $VsPython) -and (Test-Path $Downloader)) {
-    & $VsPython $Downloader --model kittentts --check
+$Packs = Join-Path $ScriptDir "voice-packs.py"
+Write-Log "Checking the default KittenTTS voice pack..."
+if ((Test-Path $VsPython) -and (Test-Path $Packs)) {
+    & $VsPython $Packs check kittentts
     if ($LASTEXITCODE -eq 0) {
-        Write-Skip "KittenTTS is already in the Hugging Face cache"
+        Write-Skip "KittenTTS is already installed"
     } elseif ($DryRun) {
-        Write-Need "KittenTTS weights"
-        Write-Plan "Download KittenTTS into the Hugging Face cache (about 80 MB, Apache-2.0)."
+        Write-Need "KittenTTS voice pack"
+        Write-Plan "Install the default KittenTTS pack (about 80 MB, Apache-2.0)."
     } else {
         New-Item -ItemType Directory -Force -Path (Split-Path $StatusFile) | Out-Null
-        & $VsPython $Downloader --model kittentts --status-file $StatusFile
+        & $VsPython $Packs install kittentts --status-file $StatusFile
     }
 } else {
-    Write-Need "VoiceStudio Python and scripts/download-models.py to fetch KittenTTS"
+    Write-Need "VoiceStudio Python and scripts/voice-packs.py to fetch KittenTTS"
 }
 
-Write-Log "Checking OmniVoice weights ($($pins.OMNIVOICE_MODEL), CC-BY-NC)..."
-if ((Test-Path $VsPython) -and (Test-Path $Downloader)) {
-    & $VsPython $Downloader --model omnivoice --check
+Write-Log "Checking optional voice packs..."
+if ((Test-Path $VsPython) -and (Test-Path $Packs)) {
+    & $VsPython $Packs check omnivoice
     if ($LASTEXITCODE -eq 0) {
-        Write-Skip "OmniVoice is already in the Hugging Face cache"
+        Write-Skip "OmniVoice is already installed"
     } elseif ($WithOmniVoice) {
-        Write-Need "OmniVoice weights (several GB, CC-BY-NC)"
-        if ($DryRun) { Write-Plan "Download OmniVoice into the Hugging Face cache." }
-        else { & $VsPython $Downloader --model omnivoice --status-file $StatusFile }
+        Write-Need "OmniVoice weights (several GB, CC-BY-NC, not for commercial use)"
+        if ($DryRun) { Write-Plan "Install the OmniVoice pack." }
+        else { & $VsPython $Packs install omnivoice --status-file $StatusFile }
     } else {
-        Write-Skip "OmniVoice is on demand. Re-run with -WithOmniVoice or choose Best quality (slow) later."
+        Write-Skip "OmniVoice is optional. Install it later from Settings or with: nvr voices install omnivoice"
     }
-}
-
-Write-Log "Checking Kokoro weights (Butler and Indian English)..."
-if ((Test-Path $VsPython) -and (Test-Path $Downloader)) {
-    & $VsPython $Downloader --model kokoro --check
+    & $VsPython $Packs check kokoro
     if ($LASTEXITCODE -eq 0) {
-        Write-Skip "Kokoro is already in the local sherpa cache"
-    } elseif ($DryRun) {
-        Write-Need "Kokoro int8 multilingual pack"
-        Write-Plan "Download Kokoro into the local sherpa cache (about 180 MB unpacked, Apache-2.0)."
+        Write-Skip "Kokoro is already installed"
     } else {
-        New-Item -ItemType Directory -Force -Path (Split-Path $StatusFile) | Out-Null
-        & $VsPython $Downloader --model kokoro --status-file $StatusFile
+        Write-Skip "Kokoro is optional (Butler and Indian English). Install it later from Settings or with: nvr voices install kokoro"
     }
-} else {
-    Write-Need "VoiceStudio Python and scripts/download-models.py to fetch Kokoro"
 }
 
 Write-Log ""

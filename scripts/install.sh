@@ -20,10 +20,10 @@ Usage: install.sh [--dry-run] [--with-omnivoice]
 
 Checks for, and if missing installs, Node.js 22+, uv, Python 3.11,
 Natural Voice Reader npm dependencies, and a pinned VoiceStudio checkout.
-KittenTTS weights download on demand into the Hugging Face cache.
-Kokoro (Apache-2.0) downloads by default for Butler and the Indian English voices.
-OmniVoice weights (several GB, CC-BY-NC) download only with --with-omnivoice
-or when you later choose Best quality (slow).
+KittenTTS (the default voice pack) downloads on demand into the Hugging Face cache.
+Optional packs such as Kokoro and OmniVoice are installed later from Settings
+or with `nvr voices install <id>`. OmniVoice (several GB, CC-BY-NC) can also
+be fetched now with --with-omnivoice.
 
 --dry-run  Detect what is already present and print the plan. Make no changes.
 HELP
@@ -255,48 +255,40 @@ fi
 
 # --- Models ---
 VS_PY="$(nvr_vs_python "${VS_ROOT}")"
-DOWNLOADER="${SCRIPT_DIR}/download-models.py"
-log "Checking KittenTTS weights (${KITTEN_MODEL})..."
-if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${DOWNLOADER}" --model kittentts --check >/dev/null 2>&1; then
-  skip "KittenTTS is already in the Hugging Face cache"
+PACKS="${SCRIPT_DIR}/voice-packs.py"
+log "Checking the default KittenTTS voice pack..."
+if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${PACKS}" check kittentts >/dev/null 2>&1; then
+  skip "KittenTTS is already installed"
 else
-  need "KittenTTS weights (${KITTEN_MODEL})"
+  need "KittenTTS voice pack (${KITTEN_MODEL})"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
-    plan "Download KittenTTS into the Hugging Face cache (about 80 MB, Apache-2.0)."
+    plan "Install the default KittenTTS pack (about 80 MB, Apache-2.0)."
   else
     nvr_write_status "${STATUS_FILE}" '{"state":"downloading","model":"kittentts","percent":0,"message":"Downloading KittenTTS voice model. You can keep using the reader."}'
-    "${VS_PY}" "${DOWNLOADER}" --model kittentts --status-file "${STATUS_FILE}"
+    "${VS_PY}" "${PACKS}" install kittentts --status-file "${STATUS_FILE}"
   fi
   CHANGES=1
 fi
 
-log "Checking OmniVoice weights (${OMNIVOICE_MODEL}, CC-BY-NC)..."
-if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${DOWNLOADER}" --model omnivoice --check >/dev/null 2>&1; then
-  skip "OmniVoice is already in the Hugging Face cache"
+log "Checking optional voice packs..."
+if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${PACKS}" check omnivoice >/dev/null 2>&1; then
+  skip "OmniVoice is already installed"
 elif [[ "${WITH_OMNIVOICE}" -eq 1 ]]; then
-  need "OmniVoice weights (several GB, CC-BY-NC)"
+  need "OmniVoice weights (several GB, CC-BY-NC, not for commercial use)"
   if [[ "${DRY_RUN}" -eq 1 ]]; then
-    plan "Download OmniVoice into the Hugging Face cache."
+    plan "Install the OmniVoice pack."
   else
-    "${VS_PY}" "${DOWNLOADER}" --model omnivoice --status-file "${STATUS_FILE}"
+    "${VS_PY}" "${PACKS}" install omnivoice --status-file "${STATUS_FILE}"
   fi
   CHANGES=1
 else
-  skip "OmniVoice is on demand. Re-run with --with-omnivoice or choose Best quality (slow) later."
+  skip "OmniVoice is optional. Install it later from Settings or with: nvr voices install omnivoice"
 fi
 
-log "Checking Kokoro weights (Butler and Indian English)..."
-if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${DOWNLOADER}" --model kokoro --check >/dev/null 2>&1; then
-  skip "Kokoro is already in ~/.cache/nvr/sherpa"
+if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${PACKS}" check kokoro >/dev/null 2>&1; then
+  skip "Kokoro is already installed"
 else
-  need "Kokoro int8 multilingual pack (about 180 MB unpacked, Apache-2.0)"
-  if [[ "${DRY_RUN}" -eq 1 ]]; then
-    plan "Download Kokoro into ~/.cache/nvr/sherpa."
-  else
-    nvr_write_status "${STATUS_FILE}" '{"state":"downloading","model":"kokoro","percent":0,"message":"Downloading the Kokoro voice model. You can keep using the reader."}'
-    "${VS_PY}" "${DOWNLOADER}" --model kokoro --status-file "${STATUS_FILE}"
-  fi
-  CHANGES=1
+  skip "Kokoro is optional (Butler and Indian English). Install it later from Settings or with: nvr voices install kokoro"
 fi
 
 log ""

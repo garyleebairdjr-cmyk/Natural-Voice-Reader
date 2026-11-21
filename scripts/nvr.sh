@@ -16,6 +16,23 @@ source "${SCRIPT_DIR}/nvr-lib.sh"
 nvr_load_pins "${SCRIPT_DIR}"
 
 NVR_ROOT="${NVR_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+export NVR_ROOT
+
+# `nvr voices ...` manages packs without starting the reader.
+if [[ "${1:-}" == "voices" ]]; then
+  shift
+  VS_ROOT="$(nvr_default_vs_root)"
+  py="$(nvr_vs_python "${VS_ROOT}")"
+  if [[ -z "${py}" ]]; then
+    py="$(command -v python3 || true)"
+  fi
+  if [[ -z "${py}" ]]; then
+    printf '%s\n' "Python 3 is required for nvr voices." >&2
+    exit 1
+  fi
+  exec "${py}" "${SCRIPT_DIR}/voice-packs.py" "$@"
+fi
+
 VS_ROOT="$(nvr_default_vs_root)"
 VS_HOST="${VOICESTUDIO_HOST:-127.0.0.1}"
 VS_PORT="${VOICESTUDIO_PORT:-3900}"
@@ -235,6 +252,8 @@ start_reader() {
   (
     cd "${NVR_ROOT}"
     export VOICESTUDIO_URL="${VS_URL}"
+    export VOICESTUDIO_ROOT="${VS_ROOT}"
+    export NVR_ROOT="${NVR_ROOT}"
     export KOKORO_URL="${KOKORO_URL}"
     export NVR_KOKORO_URL="${KOKORO_URL}"
     export VOICESTUDIO_TTS_MODEL="${MODEL}"
@@ -373,9 +392,18 @@ start_kokoro() {
 }
 
 ensure_model_weights || true
-ensure_named_weights "kokoro" "Kokoro" || true
-if ! start_kokoro; then
-  log "Continuing without Kokoro. Butler and the Indian English voices will be unavailable until it starts."
+
+# Optional packs are installed from Settings or `nvr voices install`.
+py="$(nvr_vs_python "${VS_ROOT}")"
+if [[ -z "${py}" ]]; then
+  py="$(command -v python3 || true)"
+fi
+if [[ -n "${py}" ]] && "${py}" "${SCRIPT_DIR}/voice-packs.py" check kokoro >/dev/null 2>&1; then
+  if ! start_kokoro; then
+    log "Continuing without Kokoro. Butler and the Indian English voices will be unavailable until it starts."
+  fi
+else
+  log "Kokoro is not installed. Install it from Settings or with: nvr voices install kokoro"
 fi
 
 nvr_write_status "${STATUS_FILE}" "{\"state\":\"warming\",\"model\":\"${MODEL}\",\"message\":\"Loading voice engine. The first load can take a minute on this computer.\"}"

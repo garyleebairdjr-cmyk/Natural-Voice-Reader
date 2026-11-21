@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "kittentts",
+      "name": "KittenTTS",
+      "description": "Fast local English voices (ONNX). This is the default pack.",
+      "engine": "kittentts",
+      "installByDefault": true,
+      "commercialUse": true,
+      "license": "Apache-2.0",
+      "sizeBytes": 81550030,
+      "source": {
+        "kind": "huggingface",
+        "repo": "KittenML/kitten-tts-mini-0.8",
+        "revision": "c02725660cea441db4c383af69f1f26f5cd00947",
+        "files": [
+          {
+            "name": "config.json",
+            "sha256": "6b160bc9b19e24ecb21e84bc14f8a7da21fdf47ec72d42450bc5cf514b61804a"
+          },
+          {
+            "name": "kitten_tts_mini_v0_8.onnx",
+            "sha256": "0f5bbae4fc4800c98dbc544a87ecfa79510de2fb8222db30d12e5bfe9177df91"
+          },
+          {
+            "name": "voices.npz",
+            "sha256": "40ad2638952b77b7b2f30127e2608e169fc69dd256b53bd8aaa3409a33193c42"
+          }
+        ]
+      },
+      "voices": [
+        {
+          "id": "leo",
+          "name": "Leo",
+          "note": "Steady, British",
+          "language": "en",
+          "accent": "british",
+          "gender": "male"
+        },
+        {
+          "id": "eve",
+          "name": "Eve",
+          "note": "Bright, British",
+          "language": "en",
+          "accent": "british",
+          "gender": "female"
+        },
+        {
+          "id": "rex",
+          "name": "Rex",
+          "note": "Clear and direct",
+          "language": "en",
+          "gender": "male"
+        },
+        {
+          "id": "sal",
+          "name": "Sal",
+          "note": "Smooth midrange",
+          "language": "en",
+          "gender": "female"
+        },
+        {
+          "id": "ara",
+          "name": "Ara",
+          "note": "Warm and close",
+          "language": "en",
+          "gender": "female"
+        },
+        {
+          "id": "orion",
+          "name": "Orion",
+          "note": "Cinematic read",
+          "language": "en",
+          "gender": "male"
+        },
+        {
+          "id": "helix",
+          "name": "Helix",
+          "note": "Commentary punch",
+          "language": "en",
+          "gender": "male"
+        },
+        {
+          "id": "luna",
+          "name": "Luna",
+          "note": "Patient and soft",
+          "language": "en",
+          "gender": "female"
+        },
+        {
+          "id": "sirius",
+          "name": "Sirius",
+          "note": "Quick and playful",
+          "language": "en",
+          "gender": "female"
+        },
+        {
+          "id": "aurora",
+          "name": "Aurora",
+          "note": "Calm and even",
+          "language": "en",
+          "gender": "female"
+        },
+        {
+          "id": "atlas",
+          "name": "Atlas",
+          "note": "Low and sure",
+          "language": "en",
+          "gender": "male"
+        },
+        {
+          "id": "rigel",
+          "name": "Rigel",
+          "note": "Precise, Australian",
+          "language": "en",
+          "accent": "australian",
+          "gender": "female"
+        },
+        {
+          "id": "naksh",
+          "name": "Naksh",
+          "note": "Thoughtful, Indian",
+          "language": "en",
+          "accent": "indian",
+          "gender": "male"
+        },
+        {
+          "id": "lumen",
+          "name": "Lumen",
+          "note": "Warm educator",
+          "language": "en",
+          "gender": "male"
+        },
+        {
+          "id": "iris",
+          "name": "Iris",
+          "note": "Upbeat and light",
+          "language": "en",
+          "gender": "female"
+        },
+        {
+          "id": "castor",
+          "name": "Castor",
+          "note": "Easygoing",
+          "language": "en",
+          "gender": "male"
+        }
+      ]
+    },
+    {
+      "id": "kokoro",
+      "name": "Kokoro",
+      "description": "Butler (British) and Indian English voices (Mira, Arjun). Apache-2.0.",
+      "engine": "kokoro",
+      "installByDefault": false,
+      "commercialUse": true,
+      "license": "Apache-2.0",
+      "sizeBytes": 189881734,
+      "source": {
+        "kind": "tarball",
+        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2",
+        "dirName": "kokoro-int8-multi-lang-v1_0",
+        "files": [
+          {
+            "name": "model.int8.onnx",
+            "sha256": "75635ea3b85a32d00094dcdd61a258aba87c160f7c264c304a7b3ae9d734195e"
+          },
+          {
+            "name": "voices.bin",
+            "sha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29"
+          },
+          {
+            "name": "tokens.txt",
+            "sha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425"
+          }
+        ]
+      },
+      "voices": [
+        {
+          "id": "butler",
+          "name": "Butler (British)",
+          "note": "Jarvis-style butler. Generic RP; not a film or actor voice.",
+          "language": "en-GB",
+          "accent": "british",
+          "gender": "male"
+        },
+        {
+          "id": "mira",
+          "name": "Mira (Indian English)",
+          "note": "Clear, natural Indian English.",
+          "language": "en-IN",
+          "accent": "indian",
+          "gender": "female"
+        },
+        {
+          "id": "arjun",
+          "name": "Arjun (Indian English)",
+          "note": "Calm, natural Indian English.",
+          "language": "en-IN",
+          "accent": "indian",
+          "gender": "male"
+        }
+      ]
+    },
+    {
+      "id": "omnivoice",
+      "name": "OmniVoice",
+      "description": "Higher-quality local engine (slow on CPU). Enables Best quality in the reader. Weights are CC-BY-NC.",
+      "engine": "omnivoice",
+      "installByDefault": false,
+      "commercialUse": false,
+      "license": "LicenseRef-CC-BY-NC",
+      "licenseNote": "Weights are CC-BY-NC (version not stated on the model card). Not for paid, client, or monetized work. The tokenizer also carries Boson Higgs Audio 2 and Meta Llama 3 terms. See THIRD_PARTY.md.",
+      "sizeBytes": 3267471415,
+      "source": {
+        "kind": "huggingface",
+        "repo": "k2-fsa/OmniVoice",
+        "revision": "3fc979d1cd72492cd679c5ac2611e0d7ac047ba1"
+      },
+      "voices": []
+    }
+  ]
+}

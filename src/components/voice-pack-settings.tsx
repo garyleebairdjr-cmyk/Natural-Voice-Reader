@@ -1,0 +1,123 @@
+import { useEffect, useState } from "react";
+import { Loader2, Settings } from "lucide-react";
+import { installVoicePack, listVoicePacks, removeVoicePack } from "@/lib/voice-packs.functions";
+import { formatPackSize, type VoicePackStatus } from "@/lib/voice-packs";
+
+type Props = {
+  packs: VoicePackStatus[];
+  onChange: (packs: VoicePackStatus[]) => void;
+};
+
+export function VoicePackSettings({ packs, onChange }: Props) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const installing = packs.some((pack) => pack.installing);
+
+  useEffect(() => {
+    if (!installing) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void listVoicePacks()
+        .then((result) => {
+          if (!cancelled) onChange(result.packs);
+        })
+        .catch(() => {});
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [installing, onChange]);
+
+  async function run(id: string, action: "install" | "remove") {
+    setError(null);
+    setBusyId(id);
+    try {
+      const result = action === "install"
+        ? await installVoicePack({ data: { id } })
+        : await removeVoicePack({ data: { id } });
+      onChange(result.packs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update that voice pack.");
+      const latest = await listVoicePacks().catch(() => null);
+      if (latest) onChange(latest.packs);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <Settings className="size-4 text-muted" />
+        <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Settings</h2>
+      </div>
+      <h3 className="text-sm font-semibold text-fg">Voice packs</h3>
+      <p className="text-xs leading-relaxed text-muted">
+        Install optional voices onto this computer. Only packs from the catalog or your
+        {" "}
+        <code className="text-fg">~/.config/nvr/voices.d</code> overlays can be added. You can also use
+        {" "}
+        <code className="text-fg">nvr voices install &lt;id&gt;</code>.
+      </p>
+      <ul className="flex flex-col gap-2">
+        {packs.map((pack) => {
+          const busy = busyId === pack.id || pack.installing;
+          const percent = pack.progress?.percent;
+          return (
+            <li key={pack.id} className="rounded-2xl border border-line bg-surface px-3 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-fg">{pack.name}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">{pack.description}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="rounded-full border border-line px-2 py-0.5 font-semibold text-fg">
+                      {formatPackSize(pack.sizeBytes)}
+                    </span>
+                    <span className="rounded-full border border-line px-2 py-0.5 font-semibold text-fg">
+                      {pack.license}
+                    </span>
+                    {!pack.commercialUse ? (
+                      <span className="rounded-full border border-amber bg-raise px-2 py-0.5 font-semibold text-amber">
+                        Not for commercial use
+                      </span>
+                    ) : null}
+                    {pack.installByDefault ? (
+                      <span className="rounded-full border border-line px-2 py-0.5 text-muted">Default</span>
+                    ) : null}
+                    <span className="text-muted">{pack.installed ? "Installed" : "Not installed"}</span>
+                  </div>
+                  {pack.licenseNote ? <p className="mt-2 text-xs leading-relaxed text-muted">{pack.licenseNote}</p> : null}
+                  {pack.progress && pack.installing ? (
+                    <p className="mt-2 text-xs text-fg" role="status">
+                      {pack.progress.message}
+                      {percent != null ? ` (${Math.round(percent)}%)` : ""}
+                    </p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void run(pack.id, pack.installed && !pack.installing ? "remove" : "install")}
+                  className={
+                    "inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border px-3 text-xs font-semibold disabled:opacity-40 " +
+                    (pack.installed
+                      ? "border-line bg-surface text-muted"
+                      : "border-amber bg-amber text-ink")
+                  }
+                >
+                  {busy ? <Loader2 className="size-4 animate-spin" /> : pack.installed ? "Remove" : "Install"}
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {error ? (
+        <p className="text-sm text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
