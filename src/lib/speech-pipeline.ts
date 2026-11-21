@@ -48,6 +48,15 @@ export const TTS_ENGINE_REGISTRY: readonly TtsEngine[] = [
     license: "CC-BY-NC (weights); tokenizer also under Boson Higgs Audio 2 and Meta Llama 3 terms",
     quality: "quality",
   },
+  {
+    id: "kokoro",
+    kind: "tts",
+    label: "Kokoro",
+    languages: ["en", "en-GB", "en-IN"],
+    mobileCapable: true,
+    license: "Apache-2.0",
+    quality: "fast",
+  },
 ];
 
 export type SpeechPipeline = {

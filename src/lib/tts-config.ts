@@ -1,6 +1,7 @@
 import { VOICES } from "./voices.ts";
 
 export const DEFAULT_VOICESTUDIO_URL = "http://127.0.0.1:3900";
+export const DEFAULT_KOKORO_URL = "http://127.0.0.1:3901";
 export const DEFAULT_VOICESTUDIO_MODEL = "kittentts";
 
 /** Exact VoiceStudio engine ids this app may request. Never send aliases or voxcpm2. */
@@ -14,6 +15,7 @@ export const TTS_WARMUP_TEXT = "The voice engine is ready.";
 export function modelLabel(model: string): string {
   if (model === "kittentts") return "KittenTTS";
   if (model === "omnivoice") return "OmniVoice";
+  if (model === "kokoro") return "Kokoro";
   return model;
 }
 
@@ -58,6 +60,13 @@ export function isTtsModelId(id: string): id is TtsModelId {
 
 /** KittenTTS has eight presets. Map the sixteen reader voices onto them. */
 const KITTEN_VOICE: Record<string, string> = {
+  butler: "expr-voice-2-m",
+  mira: "expr-voice-5-f",
+  arjun: "expr-voice-3-m",
+  aiko: "expr-voice-2-f",
+  haru: "expr-voice-4-m",
+  lena: "expr-voice-3-f",
+  jonas: "expr-voice-2-m",
   leo: "expr-voice-2-m",
   eve: "expr-voice-2-f",
   rex: "expr-voice-3-m",
@@ -91,7 +100,7 @@ export function voiceStudioVoice(model: string, voiceId: string): string {
   return "default";
 }
 
-export type TtsProvider = "voicestudio" | "xai" | "none";
+export type TtsProvider = "voicestudio" | "kokoro" | "xai" | "none";
 
 export type TtsEngineState = "ready" | "loading" | "downloading" | "unavailable";
 

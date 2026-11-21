@@ -19,12 +19,17 @@ NVR_ROOT="${NVR_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 VS_ROOT="$(nvr_default_vs_root)"
 VS_HOST="${VOICESTUDIO_HOST:-127.0.0.1}"
 VS_PORT="${VOICESTUDIO_PORT:-3900}"
+KOKORO_HOST="${KOKORO_HOST:-127.0.0.1}"
+KOKORO_PORT="${KOKORO_PORT:-3901}"
 NVR_PORT="${NVR_PORT:-8080}"
 VS_URL="${VOICESTUDIO_URL:-http://${VS_HOST}:${VS_PORT}}"
+KOKORO_URL="${KOKORO_URL:-http://${KOKORO_HOST}:${KOKORO_PORT}}"
 READER_URL="http://127.0.0.1:${NVR_PORT}"
 MODEL="${NVR_TTS_MODEL:-${VOICESTUDIO_TTS_MODEL:-kittentts}}"
 VS_LOG="${VS_LOG:-/tmp/voicestudio-api.log}"
 NVR_LOG="${NVR_LOG:-/tmp/nvr-dev.log}"
+KOKORO_LOG="${KOKORO_LOG:-/tmp/nvr-kokoro.log}"
+KOKORO_MODEL_DIR="${NVR_KOKORO_MODEL_DIR:-${HOME}/.cache/nvr/sherpa/${KOKORO_MODEL_DIR_NAME:-kokoro-int8-multi-lang-v1_0}}"
 STATUS_FILE="$(nvr_default_status_file)"
 WARMUP_TEXT="The voice engine is ready."
 nvr_apply_thread_env
@@ -35,6 +40,7 @@ log "Using ${NVR_CPU_THREADS} CPU threads for Torch/ONNX (NVR_CPU_THREADS)."
 
 VS_PID=""
 NVR_PID=""
+KOKORO_PID=""
 CLEANING=0
 
 die() {
@@ -168,15 +174,21 @@ cleanup() {
   fi
   CLEANING=1
   trap - INT TERM EXIT
-  log "Shutting down the reader and VoiceStudio..."
+  log "Shutting down the reader, Kokoro, and VoiceStudio..."
   if [[ -n "${NVR_PID}" ]]; then
     kill_tree "${NVR_PID}"
+  fi
+  if [[ -n "${KOKORO_PID}" ]]; then
+    kill_tree "${KOKORO_PID}"
   fi
   if [[ -n "${VS_PID}" ]]; then
     kill_tree "${VS_PID}"
   fi
   if [[ -n "${NVR_PID}" ]] && ! wait_pid_gone "${NVR_PID}"; then
     force_kill_tree "${NVR_PID}"
+  fi
+  if [[ -n "${KOKORO_PID}" ]] && ! wait_pid_gone "${KOKORO_PID}"; then
+    force_kill_tree "${KOKORO_PID}"
   fi
   if [[ -n "${VS_PID}" ]] && ! wait_pid_gone "${VS_PID}"; then
     force_kill_tree "${VS_PID}"
@@ -187,6 +199,7 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 stop_port "${VS_PORT}" "VoiceStudio"
+stop_port "${KOKORO_PORT}" "Kokoro"
 stop_port "${NVR_PORT}" "reader"
 
 : > "${VS_LOG}"
@@ -222,6 +235,8 @@ start_reader() {
   (
     cd "${NVR_ROOT}"
     export VOICESTUDIO_URL="${VS_URL}"
+    export KOKORO_URL="${KOKORO_URL}"
+    export NVR_KOKORO_URL="${KOKORO_URL}"
     export VOICESTUDIO_TTS_MODEL="${MODEL}"
     export NVR_TTS_MODEL="${MODEL}"
     export NVR_STATUS_FILE="${STATUS_FILE}"
@@ -286,7 +301,82 @@ if [[ "${MODEL}" == "kittentts" ]]; then
   WARM_VOICE="expr-voice-2-m"
 fi
 
+ensure_named_weights() {
+  local model="$1" label="$2" py downloader
+  py="$(nvr_vs_python "${VS_ROOT}")"
+  downloader="${SCRIPT_DIR}/download-models.py"
+  if [[ -z "${py}" || ! -f "${downloader}" ]]; then
+    return 0
+  fi
+  if "${py}" "${downloader}" --model "${model}" --check >/dev/null 2>&1; then
+    log "${label} is already in the cache."
+    return 0
+  fi
+  log "${label} is missing. Starting the reader so the UI stays usable while it downloads."
+  start_reader
+  open_browser
+  nvr_write_status "${STATUS_FILE}" "{"state":"downloading","model":"${model}","percent":0,"message":"Downloading the ${label} voice model. You can keep using the reader."}"
+  if ! "${py}" "${downloader}" --model "${model}" --status-file "${STATUS_FILE}"; then
+    log "${label} download did not finish. Specialty voices that need it will keep trying when you press play."
+    return 1
+  fi
+  log "${label} is in the cache."
+}
+
+start_kokoro() {
+  local py
+  py="$(nvr_vs_python "${VS_ROOT}")"
+  if [[ -z "${py}" || ! -f "${SCRIPT_DIR}/kokoro-server.py" ]]; then
+    log "Kokoro helper is not available (VoiceStudio Python or scripts/kokoro-server.py missing)."
+    return 1
+  fi
+  if [[ ! -f "${KOKORO_MODEL_DIR}/model.int8.onnx" && ! -f "${KOKORO_MODEL_DIR}/model.onnx" ]]; then
+    log "Kokoro weights are not in ${KOKORO_MODEL_DIR}."
+    return 1
+  fi
+  : > "${KOKORO_LOG}"
+  log "Starting Kokoro helper on ${KOKORO_HOST}:${KOKORO_PORT}..."
+  (
+    exec "${py}" "${SCRIPT_DIR}/kokoro-server.py" \
+      --host "${KOKORO_HOST}" \
+      --port "${KOKORO_PORT}" \
+      --model-dir "${KOKORO_MODEL_DIR}" \
+      --threads "${NVR_CPU_THREADS:-4}"
+  ) >>"${KOKORO_LOG}" 2>&1 &
+  KOKORO_PID=$!
+  log "Kokoro pid ${KOKORO_PID}. Log: ${KOKORO_LOG}"
+  local ok=0 i
+  for i in $(seq 1 45); do
+    if ! kill -0 "${KOKORO_PID}" 2>/dev/null; then
+      log "Kokoro exited before it became healthy. See ${KOKORO_LOG}."
+      KOKORO_PID=""
+      return 1
+    fi
+    if curl -fsS -m 5 "${KOKORO_URL}/health" >/dev/null 2>&1; then
+      ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${ok}" -ne 1 ]]; then
+    log "Timed out waiting for Kokoro /health. See ${KOKORO_LOG}."
+    return 1
+  fi
+  if curl -fsS -m 30 -X POST "${KOKORO_URL}/v1/audio/speech" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"kokoro","input":"The voice engine is ready.","voice":"bm_george","speed":1}' \
+    -o /tmp/nvr-kokoro-warmup.wav && [[ "$(wc -c < /tmp/nvr-kokoro-warmup.wav)" -gt 64 ]]; then
+    log "Kokoro is ready (Butler / accented English voices)."
+  else
+    log "Kokoro is up but the warm-up clip was empty. See ${KOKORO_LOG}."
+  fi
+}
+
 ensure_model_weights || true
+ensure_named_weights "kokoro" "Kokoro" || true
+if ! start_kokoro; then
+  log "Continuing without Kokoro. Butler and the Indian/Japanese English voices will be unavailable until it starts."
+fi
 
 nvr_write_status "${STATUS_FILE}" "{\"state\":\"warming\",\"model\":\"${MODEL}\",\"message\":\"Loading voice engine. The first load can take a minute on this computer.\"}"
 log "Pinning and warming ${MODEL}..."
@@ -318,7 +408,7 @@ nvr_write_status "${STATUS_FILE}" "{\"state\":\"ready\",\"model\":\"${MODEL}\",\
 
 start_reader
 open_browser
-log "Ready. Press Ctrl+C to stop both."
+log "Ready. Press Ctrl+C to stop the reader, Kokoro, and VoiceStudio."
 
 while kill -0 "${VS_PID}" 2>/dev/null && kill -0 "${NVR_PID}" 2>/dev/null; do
   sleep 1

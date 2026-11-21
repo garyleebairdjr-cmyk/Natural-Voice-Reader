@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { isVoiceId } from "@/lib/voices";
 import { splitSpeakable, VOICESTUDIO_MAX_CHARS } from "@/lib/sentences";
+import { resolveSpeechRoute } from "@/lib/voice-routing";
 import {
+  DEFAULT_KOKORO_URL,
   DEFAULT_VOICESTUDIO_MODEL,
   DEFAULT_VOICESTUDIO_URL,
   TTS_COLD_TIMEOUT_MS,
@@ -63,9 +65,10 @@ export type SpeechOk = {
   ok: true;
   audio: string;
   mime: string;
-  provider: "voicestudio" | "xai";
+  provider: "voicestudio" | "kokoro" | "xai";
   model: string;
   speedApplied: boolean;
+  slow?: boolean;
 };
 
 export type SpeechErr = {
@@ -90,6 +93,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function voiceStudioBase(): string {
   return (process.env.VOICESTUDIO_URL ?? DEFAULT_VOICESTUDIO_URL).replace(/\/$/, "");
+}
+
+function kokoroBase(): string {
+  return (process.env.KOKORO_URL ?? process.env.NVR_KOKORO_URL ?? DEFAULT_KOKORO_URL).replace(/\/$/, "");
 }
 
 function voiceStudioHeaders(): Record<string, string> {
@@ -229,6 +236,7 @@ type SpeakInput = {
   voiceId: string;
   speed: number;
   model: string;
+  instruct?: string;
 };
 
 async function pinVoiceStudioEngine(model: string): Promise<string | null> {
@@ -272,9 +280,10 @@ async function postSpeech(input: SpeakInput, timeoutMs: number): Promise<SpeechR
     language: "en",
     denoise: true,
   };
-  if (input.model !== "kittentts") {
-    body.instruct = voiceInstruction(input.voiceId);
-    body.instructions = voiceInstruction(input.voiceId);
+  const instruct = input.instruct ?? (input.model !== "kittentts" ? voiceInstruction(input.voiceId) : undefined);
+  if (instruct) {
+    body.instruct = instruct;
+    body.instructions = instruct;
   }
 
   let res: Response;
@@ -329,7 +338,51 @@ async function speakVoiceStudio(input: SpeakInput, cold: boolean): Promise<Speec
   return result;
 }
 
+async function speakKokoro(input: SpeakInput, voice: string): Promise<SpeechResult> {
+  const timeoutMs = engineWarmed ? TTS_WARM_TIMEOUT_MS : TTS_COLD_TIMEOUT_MS;
+  let res: Response;
+  try {
+    res = await fetch(`${kokoroBase()}/v1/audio/speech`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "kokoro",
+        input: input.text,
+        voice,
+        speed: input.speed,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    const message = err instanceof Error ? err.message : "";
+    if (name === "TimeoutError" || /timeout|abort/i.test(message)) {
+      return loadingError("The Kokoro voice helper is still starting.");
+    }
+    return {
+      ok: false,
+      error: "The Kokoro voice helper is not running. Start the reader with nvr so Butler and the accented English voices are available.",
+    };
+  }
+  if (!res.ok) {
+    if (res.status === 503) return loadingError("The Kokoro voice helper is still starting.");
+    if (res.status >= 500) return loadingError(`Kokoro is busy (${res.status}).`);
+    return { ok: false, error: `Kokoro error (${res.status}).` };
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength < 64) return { ok: false, error: "Kokoro came back empty." };
+  return {
+    ok: true,
+    audio: bytesToBase64(bytes),
+    mime: res.headers.get("content-type")?.split(";")[0].trim() || "audio/wav",
+    provider: "kokoro",
+    model: "kokoro",
+    speedApplied: true,
+  };
+}
+
 async function speakXai(input: SpeakInput): Promise<SpeechResult> {
+
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey?.trim()) return { ok: false, error: "Voice is not available in this environment." };
 
@@ -428,10 +481,31 @@ export const synthesizeSpeech = createServerFn({ method: "POST" })
       pieces.length === 1 ? pieces[0]! : data.text.length <= VOICESTUDIO_MAX_CHARS ? data.text : pieces[0]!;
     const input = { ...data, text };
 
+    const route = resolveSpeechRoute(data.voiceId, data.model);
+    if (route.provider === "kokoro") {
+      const local = await speakKokoro(input, route.voice);
+      if (local.ok) return { ...local, slow: route.slow };
+      // Do not fall back to another engine; that would drop the intended accent.
+      return local;
+    }
+
+    const routed: SpeakInput = route.instruct
+      ? { ...input, model: route.model, instruct: route.instruct }
+      : { ...input, model: route.model };
     const health = await pingVoiceStudio();
     if (health.up || health.loading) {
-      const local = await speakVoiceStudio(input, !engineWarmed || health.loading);
-      if (local.ok) return local;
+      const local = await speakVoiceStudio(routed, !engineWarmed || health.loading || route.slow);
+      if (local.ok) return { ...local, slow: route.slow };
+      // Specialty voices (German English) must keep their engine; do not swap in xAI.
+      if (route.instruct) {
+        if (!local.ok && /not available|could not reach|not running/i.test(local.error)) {
+          return {
+            ok: false,
+            error: "This German English voice needs OmniVoice. Install it with ./scripts/install.sh --with-omnivoice, then try again.",
+          };
+        }
+        return local;
+      }
       if (xaiConfigured() && !local.loading) {
         const cloud = await speakXai(input);
         if (cloud.ok) return cloud;
@@ -439,6 +513,12 @@ export const synthesizeSpeech = createServerFn({ method: "POST" })
       return local;
     }
 
+    if (route.instruct) {
+      return {
+        ok: false,
+        error: "This German English voice needs local OmniVoice. Start the reader with nvr, and install OmniVoice with ./scripts/install.sh --with-omnivoice if it is missing.",
+      };
+    }
     if (xaiConfigured()) return speakXai(input);
     return { ok: false, error: "Voice is not available in this environment." };
   });

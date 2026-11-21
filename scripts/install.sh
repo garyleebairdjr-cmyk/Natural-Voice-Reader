@@ -21,6 +21,7 @@ Usage: install.sh [--dry-run] [--with-omnivoice]
 Checks for, and if missing installs, Node.js 22+, uv, Python 3.11,
 Natural Voice Reader npm dependencies, and a pinned VoiceStudio checkout.
 KittenTTS weights download on demand into the Hugging Face cache.
+Kokoro (Apache-2.0) downloads by default for Butler and accented English voices.
 OmniVoice weights (several GB, CC-BY-NC) download only with --with-omnivoice
 or when you later choose Best quality (slow).
 
@@ -281,7 +282,21 @@ elif [[ "${WITH_OMNIVOICE}" -eq 1 ]]; then
   fi
   CHANGES=1
 else
-  skip "OmniVoice is on demand. Re-run with --with-omnivoice or choose Best quality (slow) later."
+  skip "OmniVoice is on demand. Re-run with --with-omnivoice or choose Best quality (slow) later. German English voices need it."
+fi
+
+log "Checking Kokoro weights (Butler and accented English)..."
+if [[ -n "${VS_PY}" ]] && "${VS_PY}" "${DOWNLOADER}" --model kokoro --check >/dev/null 2>&1; then
+  skip "Kokoro is already in ~/.cache/nvr/sherpa"
+else
+  need "Kokoro int8 multilingual pack (about 180 MB unpacked, Apache-2.0)"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    plan "Download Kokoro into ~/.cache/nvr/sherpa."
+  else
+    nvr_write_status "${STATUS_FILE}" '{"state":"downloading","model":"kokoro","percent":0,"message":"Downloading the Kokoro voice model. You can keep using the reader."}'
+    "${VS_PY}" "${DOWNLOADER}" --model kokoro --status-file "${STATUS_FILE}"
+  fi
+  CHANGES=1
 fi
 
 log ""

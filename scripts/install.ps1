@@ -136,8 +136,24 @@ if ((Test-Path $VsPython) -and (Test-Path $Downloader)) {
         if ($DryRun) { Write-Plan "Download OmniVoice into the Hugging Face cache." }
         else { & $VsPython $Downloader --model omnivoice --status-file $StatusFile }
     } else {
-        Write-Skip "OmniVoice is on demand. Re-run with -WithOmniVoice or choose Best quality (slow) later."
+        Write-Skip "OmniVoice is on demand. Re-run with -WithOmniVoice or choose Best quality (slow) later. German English voices need it."
     }
+}
+
+Write-Log "Checking Kokoro weights (Butler and accented English)..."
+if ((Test-Path $VsPython) -and (Test-Path $Downloader)) {
+    & $VsPython $Downloader --model kokoro --check
+    if ($LASTEXITCODE -eq 0) {
+        Write-Skip "Kokoro is already in the local sherpa cache"
+    } elseif ($DryRun) {
+        Write-Need "Kokoro int8 multilingual pack"
+        Write-Plan "Download Kokoro into the local sherpa cache (about 180 MB unpacked, Apache-2.0)."
+    } else {
+        New-Item -ItemType Directory -Force -Path (Split-Path $StatusFile) | Out-Null
+        & $VsPython $Downloader --model kokoro --status-file $StatusFile
+    }
+} else {
+    Write-Need "VoiceStudio Python and scripts/download-models.py to fetch Kokoro"
 }
 
 Write-Log ""

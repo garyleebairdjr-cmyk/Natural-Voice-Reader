@@ -18,14 +18,16 @@ import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.func
 import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
 import { SPEED_OPTIONS, useLane } from "@/lib/lane-store";
-import { DEVICE_VOICE, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
+import { DEVICE_VOICE, voiceAccentLabel, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
 import { splitForStreaming } from "@/lib/sentences";
 import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
+import { resolveSpeechRoute } from "@/lib/voice-routing";
+import { applySoftRoom } from "@/lib/soft-room";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
 type CachedClip = { url: string; speedApplied: boolean };
-type PreparedClip = { key: string; url: string; speedApplied: boolean; provider: "cache" | "voicestudio" | "xai" };
+type PreparedClip = { key: string; url: string; speedApplied: boolean; provider: "cache" | "voicestudio" | "kokoro" | "xai" };
 const audioCache = new Map<string, CachedClip>();
 const cacheOrder: string[] = [];
 const inflightAudio = new Map<string, Promise<PreparedClip>>();
@@ -65,6 +67,8 @@ export function LaneApp() {
   const setVoice = useLane((s) => s.setVoice);
   const setRotate = useLane((s) => s.setRotate);
   const setTtsModel = useLane((s) => s.setTtsModel);
+  const softRoom = useLane((s) => s.softRoom);
+  const setSoftRoom = useLane((s) => s.setSoftRoom);
   const setSpeed = useLane((s) => s.setSpeed);
   const setRepeat = useLane((s) => s.setRepeat);
   const theme = useLane((s) => s.theme);
@@ -173,6 +177,11 @@ export function LaneApp() {
       audioRef.current.playbackRate = speed;
     }
   }, [speed]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) applySoftRoom(audio, softRoom);
+  }, [softRoom]);
 
   useEffect(() => {
     let cancelled = false;
@@ -308,7 +317,8 @@ export function LaneApp() {
     const state = useLane.getState();
     const model = state.ttsModel;
     const speed = state.speed;
-    const key = audioCacheKey(voice, text, model, speed);
+    const route = resolveSpeechRoute(voice, model);
+    const key = audioCacheKey(voice, text, route.cacheKey, speed);
     const hit = audioCache.get(key);
     if (hit) return { key, url: hit.url, speedApplied: hit.speedApplied, provider: "cache" as const };
     const pending = inflightAudio.get(key);
@@ -364,17 +374,21 @@ export function LaneApp() {
     }
     const url = b64ToUrl(result.audio, result.mime);
     remember(key, { url, speedApplied: result.speedApplied });
-    if (result.provider === "voicestudio" || result.provider === "xai") {
+    if (result.provider === "voicestudio" || result.provider === "xai" || result.provider === "kokoro") {
+      const message = result.slow
+        ? "Using local OmniVoice for German-accented English. This voice is slower, often around a minute for a short paragraph."
+        : result.provider === "kokoro"
+          ? "Using local Kokoro for this voice."
+          : result.provider === "voicestudio"
+            ? `Using local VoiceStudio (${modelLabel(result.model)}).`
+            : "VoiceStudio is not running. Using the xAI cloud voice.";
       setTtsStatus((current) => ({
         provider: result.provider,
         model: result.model,
         state: "ready",
         voicestudioUp: result.provider === "voicestudio" || Boolean(current?.voicestudioUp),
         xaiConfigured: result.provider === "xai" || Boolean(current?.xaiConfigured),
-        message:
-          result.provider === "voicestudio"
-            ? `Using local VoiceStudio (${modelLabel(result.model)}).`
-            : "VoiceStudio is not running. Using the xAI cloud voice.",
+        message,
       }));
     }
     return { key, url, speedApplied: result.speedApplied, provider: result.provider };
@@ -388,7 +402,7 @@ export function LaneApp() {
   function prefetchSentence(text: string, voice: string) {
     const state = useLane.getState();
     if (state.voiceId === "device") return;
-    const key = audioCacheKey(voice, text, state.ttsModel, state.speed);
+    const key = audioCacheKey(voice, text, resolveSpeechRoute(voice, state.ttsModel).cacheKey, state.speed);
     if (audioCache.has(key) || inflightAudio.has(key)) return;
     const ac = new AbortController();
     prefetchAbort.current.push(ac);
@@ -523,6 +537,7 @@ export function LaneApp() {
         loadedKey.current = key;
       }
       audio.playbackRate = speedApplied ? 1 : useLane.getState().speed;
+      applySoftRoom(audio, useLane.getState().softRoom);
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
@@ -585,6 +600,7 @@ export function LaneApp() {
       loadedKey.current = first.key;
       audio.playbackRate = first.speedApplied ? 1 : useLane.getState().speed;
       prefetchUpcoming(pieces, 0, nextIndex, voice.id);
+      applySoftRoom(audio, useLane.getState().softRoom);
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
@@ -681,6 +697,7 @@ export function LaneApp() {
       !audio.ended
     ) {
       audio.playbackRate = speedAppliedRef.current ? 1 : state.speed;
+      applySoftRoom(audio, useLane.getState().softRoom);
       void audio.play().then(() => {
         setPhase("playing");
         void holdScreen();
@@ -746,6 +763,7 @@ export function LaneApp() {
       loadedKey.current = key;
       playingId.current = null;
       audio.playbackRate = speedApplied ? 1 : 1;
+      applySoftRoom(audio, useLane.getState().softRoom);
       await audio.play();
       if (token !== gen.current) {
         audio.pause();
@@ -1067,11 +1085,23 @@ export function LaneApp() {
             <Repeat className="size-4" />
             Repeat
           </button>
+          <button
+            type="button"
+            onClick={() => setSoftRoom(!softRoom)}
+            aria-pressed={softRoom}
+            title="A light room tone on playback only. Downloads stay dry."
+            className={
+              "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm font-semibold " +
+              (softRoom ? "border-amber bg-raise text-amber" : "border-line bg-surface text-muted")
+            }
+          >
+            Soft room
+          </button>
         </div>
 
         <p className="text-xs leading-relaxed text-muted">
-          Generated voices come from local VoiceStudio when it is running on port 3900, then from xAI if a key is set.
-          Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready.
+          Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian and Japanese English voices, then from xAI if a key is set.
+          German English voices use OmniVoice and are slower. Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready.
         </p>
       </section>
 
@@ -1133,7 +1163,7 @@ export function LaneApp() {
                 <div
                   key={voice.id}
                   className={
-                    "flex min-w-36 shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 " +
+                    "flex min-w-44 shrink-0 items-center gap-2 rounded-2xl border px-3 py-2 " +
                     (selected ? "border-amber bg-raise" : "border-line bg-surface")
                   }
                 >
@@ -1144,6 +1174,9 @@ export function LaneApp() {
                   >
                     <span className="block text-sm font-semibold text-fg">{voice.name}</span>
                     <span className="block text-xs text-muted">{voice.note}</span>
+                    {voiceAccentLabel(voice) ? (
+                      <span className="block text-xs text-muted">{voiceAccentLabel(voice)}</span>
+                    ) : null}
                   </button>
                   <button
                     type="button"

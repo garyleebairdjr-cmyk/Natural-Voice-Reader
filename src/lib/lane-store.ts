@@ -19,6 +19,7 @@ type LaneState = {
   voiceId: string;
   rotate: boolean;
   ttsModel: TtsModelId;
+  softRoom: boolean;
   speed: Speed;
   repeat: boolean;
   theme: ThemeName;
@@ -27,6 +28,7 @@ type LaneState = {
   setVoice: (id: string) => void;
   setRotate: (rotate: boolean) => void;
   setTtsModel: (model: TtsModelId) => void;
+  setSoftRoom: (softRoom: boolean) => void;
   setSpeed: (speed: Speed) => void;
   setRepeat: (repeat: boolean) => void;
   setTheme: (theme: ThemeName) => void;
@@ -64,6 +66,7 @@ export const useLane = create<LaneState>()(
       voiceId: "leo",
       rotate: false,
       ttsModel: DEFAULT_VOICESTUDIO_MODEL,
+      softRoom: false,
       speed: 1,
       repeat: false,
       theme: "dark",
@@ -72,6 +75,7 @@ export const useLane = create<LaneState>()(
       setVoice: (voiceId) => set({ voiceId }),
       setRotate: (rotate) => set({ rotate }),
       setTtsModel: (ttsModel) => set({ ttsModel: isTtsModelId(ttsModel) ? ttsModel : DEFAULT_VOICESTUDIO_MODEL }),
+      setSoftRoom: (softRoom) => set({ softRoom }),
       setSpeed: (speed) => set({ speed }),
       setRepeat: (repeat) => set({ repeat }),
       setTheme: (theme) => set({ theme }),
@@ -99,13 +103,17 @@ export const useLane = create<LaneState>()(
     {
       name: "lane-reader",
       skipHydration: true,
-      version: 2,
+      version: 3,
       migrate: (persisted, version) => {
         const state = persisted as Record<string, unknown>;
+        let next = state;
         if (version < 2) {
-          return { ...state, ttsModel: DEFAULT_VOICESTUDIO_MODEL };
+          next = { ...next, ttsModel: DEFAULT_VOICESTUDIO_MODEL };
         }
-        return state;
+        if (version < 3) {
+          next = { ...next, softRoom: false };
+        }
+        return next;
       },
       partialize: (s) => ({
         cards: s.cards,
@@ -113,6 +121,7 @@ export const useLane = create<LaneState>()(
         voiceId: s.voiceId,
         rotate: s.rotate,
         ttsModel: isTtsModelId(s.ttsModel) ? s.ttsModel : DEFAULT_VOICESTUDIO_MODEL,
+        softRoom: Boolean(s.softRoom),
         speed: s.speed,
         repeat: s.repeat,
         theme: s.theme,
