@@ -88,6 +88,29 @@ describe("lane settings and voice lists", () => {
     assert.equal(defaultLaneSettings().ttsModel, "kittentts");
   });
 
+
+  it("migrates v6 reading inks and keeps a saved light or dark theme", () => {
+    const dark = migrateLaneState({ theme: "dark", ink: "paper", volume: 40 }, 6);
+    assert.equal(dark.theme, "dark");
+    assert.equal(dark.ink, "violet");
+    assert.equal(dark.volume, 40);
+
+    const light = migrateLaneState({ theme: "light", ink: "navy" }, 6);
+    assert.equal(light.theme, "light");
+    assert.equal(light.ink, "sky");
+
+    const fresh = migrateLaneState({ volume: 50 }, 6);
+    assert.equal(fresh.theme, "system");
+    assert.equal(fresh.ink, "amber");
+  });
+
+  it("keeps an already-migrated accent and a system theme", () => {
+    const saved = migrateLaneState({ theme: "system", ink: "sage", volume: 80 }, 7);
+    assert.equal(saved.theme, "system");
+    assert.equal(saved.ink, "sage");
+    assert.equal(saved.volume, 80);
+  });
+
   it("can snapshot settings and rebuild lists for undo", () => {
     const snapshot = readLaneSettings({
       voiceId: "eve",

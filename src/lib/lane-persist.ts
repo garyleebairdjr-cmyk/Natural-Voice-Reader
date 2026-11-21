@@ -1,5 +1,6 @@
 import { DEFAULT_VOICESTUDIO_MODEL, isTtsModelId, type TtsModelId } from "./tts-config.ts";
 import { canonicalVoiceId, DEFAULT_VOICE_ID } from "./voices.ts";
+import { isThemeName, migrateInk } from "./appearance.ts";
 
 export const DEFAULT_VOLUME = 100;
 export const DEFAULT_SPEED: LaneSpeed = 1;
@@ -122,6 +123,19 @@ export function migrateLaneState(persisted: unknown, version: number): Record<st
       settingsOpen: typeof next.settingsOpen === "boolean" ? next.settingsOpen : null,
       favoriteVoiceIds: normalizeVoiceIdList(next.favoriteVoiceIds, MAX_FAVORITE_VOICES),
       recentVoiceIds: normalizeVoiceIdList(next.recentVoiceIds, MAX_RECENT_VOICES),
+    };
+  }
+  if (version < 7) {
+    next = {
+      ...next,
+      theme: isThemeName(next.theme) ? next.theme : "system",
+      ink: migrateInk(next.ink),
+    };
+  } else {
+    next = {
+      ...next,
+      theme: isThemeName(next.theme) ? next.theme : "system",
+      ink: migrateInk(next.ink),
     };
   }
   return next;

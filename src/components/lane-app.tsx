@@ -3,6 +3,7 @@ import {
   Download,
   Link2,
   Loader2,
+  Monitor,
   Moon,
   PanelRight,
   PanelRightClose,
@@ -21,7 +22,7 @@ import {
 import { Toaster, toast } from "sonner";
 import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.functions";
 import { readPage } from "@/lib/read-page.functions";
-import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
+import { defaultInk, inksFor, inkFits, migrateInk, resolveTheme, type ThemeName } from "@/lib/appearance";
 import { defaultLaneSettings, defaultSettingsOpen, effectiveGain, readLaneSettings, SETTINGS_BREAKPOINT, SPEED_OPTIONS, useLane } from "@/lib/lane-store";
 import { DEVICE_VOICE, canonicalVoiceId, isVoiceId, voiceAccentLabel, voiceById, voiceForCardIn, VOICES, type Voice } from "@/lib/voices";
 import { splitForStreaming } from "@/lib/sentences";
@@ -162,15 +163,31 @@ export function LaneApp() {
   const card = cards[index];
   const speaking = card ? voiceForCardIn(installedVoices, index, voiceId, rotate) : voiceById(voiceId);
 
+  const [appearanceReady, setAppearanceReady] = useState(false);
+  const [prefersDark, setPrefersDark] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : true,
+  );
+  const resolvedTheme = resolveTheme(theme, prefersDark);
+
   useEffect(() => {
     const finish = () => {
       const state = useLane.getState();
       const next = canonicalVoiceId(state.voiceId);
       if (next !== state.voiceId) useLane.setState({ voiceId: next });
+      setAppearanceReady(true);
     };
     const unsub = useLane.persist.onFinishHydration(finish);
     void useLane.persist.rehydrate();
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => setPrefersDark(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
   }, []);
 
   useEffect(() => {
@@ -200,11 +217,17 @@ export function LaneApp() {
   }, [packs, installedVoices, availableEngines, voiceId, ttsModel, setVoice, setTtsModel]);
 
   useEffect(() => {
-    const activeInk = inkFits(theme, ink) ? ink : defaultInk(theme);
+    if (!appearanceReady) return;
+    const activeInk = migrateInk(ink);
     if (activeInk !== ink) setInk(activeInk);
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.ink = activeInk;
-  }, [theme, ink, setInk]);
+    const root = document.documentElement;
+    root.dataset.theme = resolvedTheme;
+    root.dataset.themePref = theme;
+    root.dataset.ink = activeInk;
+    root.style.colorScheme = resolvedTheme;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", resolvedTheme === "light" ? "#f3eee4" : "#14161c");
+  }, [appearanceReady, theme, ink, resolvedTheme, setInk]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1101,11 +1124,11 @@ export function LaneApp() {
 
   function chooseTheme(next: ThemeName) {
     setTheme(next);
-    if (!inkFits(next, ink)) setInk(defaultInk(next));
+    if (!inkFits(next, ink)) setInk(defaultInk());
   }
 
   const countLabel = cards.length === 0 ? "Empty queue" : `${index + 1} of ${cards.length}`;
-  const inks = inksFor(theme);
+  const inks = inksFor();
 
   function transportBar(label: string) {
     return (
@@ -1115,7 +1138,7 @@ export function LaneApp() {
           aria-label="Previous"
           onClick={prev}
           disabled={cards.length === 0}
-          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-40"
+          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-55"
         >
           <SkipBack className="size-6" />
         </button>
@@ -1124,7 +1147,7 @@ export function LaneApp() {
           aria-label={phase === "playing" || phase === "loading" ? "Pause" : "Play"}
           onClick={toggle}
           disabled={cards.length === 0}
-          className="inline-flex size-20 items-center justify-center rounded-full bg-amber text-ink disabled:opacity-40"
+          className="inline-flex size-20 items-center justify-center rounded-full bg-amber text-ink disabled:opacity-55"
         >
           {phase === "loading" ? (
             <Loader2 className="size-8 animate-spin" />
@@ -1139,7 +1162,7 @@ export function LaneApp() {
           aria-label="Next"
           onClick={next}
           disabled={cards.length === 0}
-          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-40"
+          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-55"
         >
           <SkipForward className="size-6" />
         </button>
@@ -1148,7 +1171,7 @@ export function LaneApp() {
           type="button"
           onClick={() => void downloadCard(index)}
           disabled={!card || downloadingId === card?.id}
-          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-fg disabled:opacity-40"
+          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-fg disabled:opacity-55"
         >
           {downloadingId && downloadingId === card?.id ? (
             <Loader2 className="size-4 animate-spin" />
@@ -1196,7 +1219,7 @@ export function LaneApp() {
   return (
     <>
       <audio ref={audioRef} preload="none" className="hidden" />
-      <Toaster theme={theme === "light" ? "light" : "dark"} position="bottom-center" richColors={false} />
+      <Toaster theme={resolvedTheme} position="bottom-center" richColors={false} />
       <div className="nvr-shell" data-settings={settingsOpen ? "open" : "collapsed"}>
       <button
         type="button"
@@ -1219,7 +1242,7 @@ export function LaneApp() {
             voice options)
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Background">
+            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Appearance">
               <button
                 type="button"
                 onClick={() => chooseTheme("light")}
@@ -1244,13 +1267,25 @@ export function LaneApp() {
                 <Moon className="size-4" />
                 Dark
               </button>
+              <button
+                type="button"
+                onClick={() => chooseTheme("system")}
+                aria-pressed={theme === "system"}
+                className={
+                  "inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-sm font-semibold " +
+                  (theme === "system" ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                <Monitor className="size-4" />
+                System
+              </button>
             </div>
-            <div className="flex items-center gap-2" role="group" aria-label="Text color">
+            <div className="flex items-center gap-2" role="group" aria-label="Accent color">
               {inks.map((item) => (
                 <button
                   key={item.id}
                   type="button"
-                  aria-label={`${item.label} text`}
+                  aria-label={`${item.label} accent`}
                   aria-pressed={ink === item.id}
                   onClick={() => setInk(item.id)}
                   className={
@@ -1381,7 +1416,7 @@ export function LaneApp() {
                 type="button"
                 onClick={askClearQueue}
                 disabled={cards.length === 0}
-                className="inline-flex min-h-11 items-center gap-2 rounded-full border border-danger px-3 text-xs font-semibold text-danger disabled:opacity-40"
+                className="inline-flex min-h-11 items-center gap-2 rounded-full border border-danger px-3 text-xs font-semibold text-danger disabled:opacity-55"
               >
                 <Trash2 className="size-4" />
                 Clear queue
@@ -1410,7 +1445,7 @@ export function LaneApp() {
                     }}
                     className={
                       "min-h-14 flex-1 rounded-2xl border px-3 py-2 text-left " +
-                      (active ? "border-amber bg-raise" : "border-line bg-surface")
+                      (active ? "border-amber bg-amber-soft" : "border-line bg-surface")
                     }
                   >
                     <span className="block text-xs font-semibold text-amber tabular-nums">
@@ -1423,7 +1458,7 @@ export function LaneApp() {
                     aria-label={`Download card ${i + 1}`}
                     onClick={() => void downloadCard(i)}
                     disabled={downloadingId === item.id}
-                    className="inline-flex w-11 items-center justify-center rounded-2xl border border-line text-fg disabled:opacity-40"
+                    className="inline-flex w-11 items-center justify-center rounded-2xl border border-line text-fg disabled:opacity-55"
                   >
                     {downloadingId === item.id ? (
                       <Loader2 className="size-4 animate-spin" />
@@ -1522,7 +1557,7 @@ export function LaneApp() {
             <button
               type="submit"
               disabled={reading}
-              className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-amber px-4 text-sm font-semibold text-ink disabled:opacity-40"
+              className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-amber px-4 text-sm font-semibold text-ink disabled:opacity-55"
             >
               {reading ? <Loader2 className="size-4 animate-spin" /> : source === "link" ? <Link2 className="size-4" /> : <Plus className="size-4" />}
               {reading ? "Reading page" : source === "link" ? "Read page" : "Add to lane"}
@@ -1531,7 +1566,7 @@ export function LaneApp() {
               type="button"
               disabled={reading}
               onClick={() => (source === "link" ? void commitPage("replace") : commitPaste("replace"))}
-              className="inline-flex min-h-12 items-center justify-center rounded-full border border-line px-4 text-sm font-semibold text-fg disabled:opacity-40"
+              className="inline-flex min-h-12 items-center justify-center rounded-full border border-line px-4 text-sm font-semibold text-fg disabled:opacity-55"
             >
               Replace
             </button>

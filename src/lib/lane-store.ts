@@ -106,8 +106,8 @@ export const useLane = create<LaneState>()(
       muted: false,
       speed: 1,
       repeat: false,
-      theme: "dark",
-      ink: defaultInk("dark"),
+      theme: "system",
+      ink: defaultInk(),
       seeded: true,
       settingsOpen: null,
       favoriteVoiceIds: [],
@@ -160,7 +160,7 @@ export const useLane = create<LaneState>()(
     {
       name: "lane-reader",
       skipHydration: true,
-      version: 6,
+      version: 7,
       migrate: migrateLaneState,
       partialize: (s) => ({
         cards: s.cards,

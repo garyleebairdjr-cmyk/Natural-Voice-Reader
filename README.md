@@ -5,6 +5,25 @@ reading queue. Choose a voice and playback speed, move between reading cards,
 and download generated audio. Your queue and preferences are stored in this
 browser.
 
+## Screenshots
+
+Dark and light themes, settings hidden so the queue can use the full width,
+the searchable voice picker, the community pack browser, and a phone-sized
+layout. Appearance can follow the system theme, and four accents (Amber, Sky,
+Sage, and Violet) tint the controls in both modes.
+
+![The reader in the dark theme, with the sample queue and settings open.](docs/screenshots/desktop-dark.png)
+
+![The reader in the light theme, with a warm paper background and the sample queue.](docs/screenshots/desktop-light.png)
+
+![The same desktop layout with the settings panel hidden so the queue can use the full width.](docs/screenshots/settings-hidden.png)
+
+![The searchable voice picker, with a compact control in the playback bar.](docs/screenshots/voice-picker.png)
+
+![The Browse voice packs dialog, listing community packs with licenses and filters.](docs/screenshots/browse-packs.png)
+
+![The reader on a narrow phone screen.](docs/screenshots/mobile.png)
+
 ## Requirements
 
 - Node.js 22 or newer
@@ -117,7 +136,9 @@ stay at the top. A compact version of the picker lives in the playback bar so
 you can change the voice while Settings is hidden.
 
 The settings panel can be hidden to give the queue the full width. Use the
-Settings button, or press `,` (or Ctrl+, / Cmd+,). On screens narrower than
+Settings button, or press `,` (or Ctrl+, / Cmd+,). Choose Light, Dark, or
+System (the default for new readers, following the device theme), and pick an
+accent for buttons and highlights. On screens narrower than
 1024px the panel starts collapsed and opens as a slide-over drawer. That
 preference is saved with the rest of the reader settings.
 
