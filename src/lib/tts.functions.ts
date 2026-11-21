@@ -4,7 +4,13 @@ import { splitSpeakable, VOICESTUDIO_MAX_CHARS } from "@/lib/sentences";
 import {
   DEFAULT_VOICESTUDIO_MODEL,
   DEFAULT_VOICESTUDIO_URL,
+  TTS_COLD_TIMEOUT_MS,
+  TTS_HEALTH_TIMEOUT_MS,
+  TTS_WARM_TIMEOUT_MS,
+  TTS_WARMUP_TEXT,
+  isForbiddenTtsModel,
   isTtsModelId,
+  modelLabel,
   type TtsStatus,
   voiceInstruction,
   voiceStudioVoice,
@@ -25,9 +31,13 @@ export type SpeechOk = {
 export type SpeechErr = {
   ok: false;
   error: string;
+  loading?: boolean;
 };
 
 export type SpeechResult = SpeechOk | SpeechErr;
+
+let lastPinnedModel: string | null = null;
+let engineWarmed = false;
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -42,10 +52,20 @@ function voiceStudioBase(): string {
   return (process.env.VOICESTUDIO_URL ?? DEFAULT_VOICESTUDIO_URL).replace(/\/$/, "");
 }
 
-function requestedModel(raw: unknown): string {
-  if (typeof raw === "string" && isTtsModelId(raw)) return raw;
-  const fromEnv = process.env.VOICESTUDIO_TTS_MODEL?.trim();
-  if (fromEnv && isTtsModelId(fromEnv)) return fromEnv;
+function voiceStudioHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const apiKey = process.env.VOICESTUDIO_API_KEY?.trim() || process.env.OMNIVOICE_API_KEY?.trim();
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  return headers;
+}
+
+export function requestedModel(raw: unknown): string {
+  if (typeof raw === "string") {
+    if (isForbiddenTtsModel(raw)) return DEFAULT_VOICESTUDIO_MODEL;
+    if (isTtsModelId(raw)) return raw;
+  }
+  const fromEnv = process.env.VOICESTUDIO_TTS_MODEL?.trim() || process.env.NVR_TTS_MODEL?.trim();
+  if (fromEnv && !isForbiddenTtsModel(fromEnv) && isTtsModelId(fromEnv)) return fromEnv;
   return DEFAULT_VOICESTUDIO_MODEL;
 }
 
@@ -55,14 +75,24 @@ function clampSpeed(raw: unknown): number {
   return Math.min(1.5, Math.max(0.7, n));
 }
 
-async function pingVoiceStudio(timeoutMs = 1500): Promise<boolean> {
+async function pingVoiceStudio(timeoutMs = TTS_HEALTH_TIMEOUT_MS): Promise<{
+  up: boolean;
+  engine: string | null;
+  loading: boolean;
+}> {
   try {
     const res = await fetch(`${voiceStudioBase()}/health`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
-    return res.ok;
-  } catch {
-    return false;
+    if (!res.ok) return { up: false, engine: null, loading: res.status >= 500 };
+    const body = (await res.json().catch(() => null)) as { engine?: unknown; status?: unknown } | null;
+    const engine = typeof body?.engine === "string" ? body.engine : null;
+    return { up: true, engine, loading: false };
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    const message = err instanceof Error ? err.message : "";
+    const loading = name === "TimeoutError" || /timeout|abort|network/i.test(message);
+    return { up: false, engine: null, loading };
   }
 }
 
@@ -70,36 +100,73 @@ function xaiConfigured(): boolean {
   return Boolean(process.env.XAI_API_KEY?.trim());
 }
 
-export const getTtsStatus = createServerFn({ method: "GET" }).handler(async (): Promise<TtsStatus> => {
-  const voicestudioUp = await pingVoiceStudio();
+function loadingError(detail?: string): SpeechErr {
+  return {
+    ok: false,
+    loading: true,
+    error: detail?.trim()
+      ? `Loading voice engine. ${detail.trim()}`
+      : "Loading voice engine. The first load can take a minute on this computer.",
+  };
+}
+
+function statusFor(
+  health: { up: boolean; engine: string | null; loading: boolean },
+  model: string,
+  extra?: Partial<TtsStatus>,
+): TtsStatus {
   const hasXai = xaiConfigured();
-  if (voicestudioUp) {
-    const model = requestedModel(undefined);
+  if (health.up) {
     return {
       provider: "voicestudio",
       model,
-      voicestudioUp,
+      state: extra?.state ?? "ready",
+      voicestudioUp: true,
       xaiConfigured: hasXai,
-      message: `Using local VoiceStudio (${model === "kittentts" ? "KittenTTS" : "OmniVoice"}).`,
+      message: extra?.message ?? `Using local VoiceStudio (${modelLabel(model)}).`,
+    };
+  }
+  if (health.loading) {
+    return {
+      provider: "voicestudio",
+      model,
+      state: "loading",
+      voicestudioUp: false,
+      xaiConfigured: hasXai,
+      message: "Loading voice engine. The first load can take a minute on this computer.",
     };
   }
   if (hasXai) {
     return {
       provider: "xai",
       model: "xai",
-      voicestudioUp,
-      xaiConfigured: hasXai,
+      state: "ready",
+      voicestudioUp: false,
+      xaiConfigured: true,
       message: "VoiceStudio is not running. Using the xAI cloud voice.",
     };
   }
   return {
     provider: "none",
     model: null,
-    voicestudioUp,
-    xaiConfigured: hasXai,
+    state: "unavailable",
+    voicestudioUp: false,
+    xaiConfigured: false,
     message:
       "Generated voices are not available. VoiceStudio is not running and no xAI key is configured, so every named voice uses this browser's device voice.",
   };
+}
+
+export const getTtsStatus = createServerFn({ method: "GET" }).handler(async (): Promise<TtsStatus> => {
+  const model = requestedModel(undefined);
+  const health = await pingVoiceStudio();
+  if (health.up && !engineWarmed) {
+    return statusFor(health, model, {
+      state: "loading",
+      message: `Loading voice engine (${modelLabel(model)}). The first load can take a minute.`,
+    });
+  }
+  return statusFor(health, model);
 });
 
 type SpeakInput = {
@@ -109,14 +176,38 @@ type SpeakInput = {
   model: string;
 };
 
-async function speakVoiceStudio(
-  input: SpeakInput,
-  signal?: AbortSignal,
-): Promise<SpeechResult> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const apiKey = process.env.VOICESTUDIO_API_KEY?.trim() || process.env.OMNIVOICE_API_KEY?.trim();
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+async function pinVoiceStudioEngine(model: string): Promise<string | null> {
+  if (isForbiddenTtsModel(model) || !isTtsModelId(model)) {
+    return `Refused to pin an unsupported engine.`;
+  }
+  if (lastPinnedModel === model) return null;
+  try {
+    const res = await fetch(`${voiceStudioBase()}/engines/select`, {
+      method: "POST",
+      headers: voiceStudioHeaders(),
+      body: JSON.stringify({ family: "tts", backend_id: model }),
+      signal: AbortSignal.timeout(TTS_HEALTH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      return `Could not pin ${modelLabel(model)} (${res.status}).`;
+    }
+    const body = (await res.json().catch(() => null)) as { active?: unknown } | null;
+    const active = typeof body?.active === "string" ? body.active : null;
+    if (active && active !== model && model === "omnivoice") {
+      // VoiceStudio remaps model "omnivoice" to the active engine. If we
+      // cannot make OmniVoice the active engine, later speech calls would
+      // silently use something else (for example pockettts).
+      return `VoiceStudio is using ${active} as the active engine, not OmniVoice.`;
+    }
+    lastPinnedModel = model;
+    engineWarmed = false;
+    return null;
+  } catch {
+    return "Loading voice engine. Could not pin the engine yet.";
+  }
+}
 
+async function postSpeech(input: SpeakInput, timeoutMs: number): Promise<SpeechResult> {
   const body: Record<string, unknown> = {
     model: input.model,
     input: input.text,
@@ -135,20 +226,29 @@ async function speakVoiceStudio(
   try {
     res = await fetch(`${voiceStudioBase()}/v1/audio/speech`, {
       method: "POST",
-      headers,
+      headers: voiceStudioHeaders(),
       body: JSON.stringify(body),
-      signal: signal ?? AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") throw err;
-    return { ok: false, error: "Could not reach local VoiceStudio." };
+    const name = err instanceof Error ? err.name : "";
+    const message = err instanceof Error ? err.message : "";
+    if (name === "TimeoutError" || /timeout|abort/i.test(message)) {
+      return loadingError("The first load can take a minute on this computer.");
+    }
+    return loadingError("Could not reach local VoiceStudio.");
   }
 
   if (!res.ok) {
+    if (res.status >= 500 || res.status === 429) {
+      return loadingError(`VoiceStudio is busy (${res.status}).`);
+    }
     return { ok: false, error: `VoiceStudio error (${res.status}).` };
   }
   const bytes = new Uint8Array(await res.arrayBuffer());
   if (bytes.byteLength < 64) return { ok: false, error: "VoiceStudio came back empty." };
+  engineWarmed = true;
+  lastPinnedModel = input.model;
   return {
     ok: true,
     audio: bytesToBase64(bytes),
@@ -159,7 +259,22 @@ async function speakVoiceStudio(
   };
 }
 
-async function speakXai(input: SpeakInput, signal?: AbortSignal): Promise<SpeechResult> {
+async function speakVoiceStudio(input: SpeakInput, cold: boolean): Promise<SpeechResult> {
+  const pinError = await pinVoiceStudioEngine(input.model);
+  if (pinError && input.model === "omnivoice") {
+    return loadingError(pinError);
+  }
+
+  const timeoutMs = cold || !engineWarmed ? TTS_COLD_TIMEOUT_MS : TTS_WARM_TIMEOUT_MS;
+  let result = await postSpeech(input, timeoutMs);
+  if (!result.ok && result.loading) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    result = await postSpeech(input, TTS_COLD_TIMEOUT_MS);
+  }
+  return result;
+}
+
+async function speakXai(input: SpeakInput): Promise<SpeechResult> {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey?.trim()) return { ok: false, error: "Voice is not available in this environment." };
 
@@ -176,7 +291,7 @@ async function speakXai(input: SpeakInput, signal?: AbortSignal): Promise<Speech
         voice_id: input.voiceId,
         language: "en",
       }),
-      signal: signal ?? AbortSignal.timeout(90000),
+      signal: AbortSignal.timeout(90000),
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;
@@ -195,6 +310,43 @@ async function speakXai(input: SpeakInput, signal?: AbortSignal): Promise<Speech
     speedApplied: false,
   };
 }
+
+export const prepareTtsEngine = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    const raw = input as { model?: unknown };
+    return { model: requestedModel(raw.model) };
+  })
+  .handler(async ({ data }): Promise<TtsStatus> => {
+    const model = data.model;
+    const health = await pingVoiceStudio();
+    if (!health.up && !health.loading) return statusFor(health, model);
+    const pinError = await pinVoiceStudioEngine(model);
+    if (pinError && model === "omnivoice") {
+      return statusFor(health, model, { state: "loading", message: `Loading voice engine. ${pinError}` });
+    }
+    const warm = await postSpeech(
+      { text: TTS_WARMUP_TEXT, voiceId: "leo", speed: 1, model },
+      TTS_COLD_TIMEOUT_MS,
+    );
+    if (!warm.ok) {
+      const retry = await postSpeech(
+        { text: TTS_WARMUP_TEXT, voiceId: "leo", speed: 1, model },
+        TTS_COLD_TIMEOUT_MS,
+      );
+      if (!retry.ok) {
+        return statusFor(await pingVoiceStudio(), model, {
+          state: "loading",
+          message: retry.error || "Loading voice engine. The first load can take a minute on this computer.",
+        });
+      }
+    }
+    engineWarmed = true;
+    lastPinnedModel = model;
+    return statusFor(await pingVoiceStudio(), model, {
+      state: "ready",
+      message: `Using local VoiceStudio (${modelLabel(model)}). The engine is ready.`,
+    });
+  });
 
 export const synthesizeSpeech = createServerFn({ method: "POST" })
   .validator((input: unknown) => {
@@ -217,17 +369,15 @@ export const synthesizeSpeech = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SpeechResult> => {
     const pieces = splitSpeakable(data.text);
     if (pieces.length === 0) throw new Error("Nothing to read.");
-    // Sentence-level requests stay under the VoiceStudio 4,096-character cap.
-    // If the client sent a longer card, speak the first piece only; the player
-    // should split first. Downloads that pass a full card are handled below
-    // when each piece fits.
-    const text = pieces.length === 1 ? pieces[0]! : data.text.length <= VOICESTUDIO_MAX_CHARS ? data.text : pieces[0]!;
+    const text =
+      pieces.length === 1 ? pieces[0]! : data.text.length <= VOICESTUDIO_MAX_CHARS ? data.text : pieces[0]!;
     const input = { ...data, text };
 
-    if (await pingVoiceStudio()) {
-      const local = await speakVoiceStudio(input);
+    const health = await pingVoiceStudio();
+    if (health.up || health.loading) {
+      const local = await speakVoiceStudio(input, !engineWarmed || health.loading);
       if (local.ok) return local;
-      if (xaiConfigured()) {
+      if (xaiConfigured() && !local.loading) {
         const cloud = await speakXai(input);
         if (cloud.ok) return cloud;
       }

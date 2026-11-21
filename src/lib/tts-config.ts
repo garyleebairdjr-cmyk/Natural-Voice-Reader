@@ -3,6 +3,39 @@ import { VOICES } from "./voices.ts";
 export const DEFAULT_VOICESTUDIO_URL = "http://127.0.0.1:3900";
 export const DEFAULT_VOICESTUDIO_MODEL = "omnivoice";
 
+/** Exact VoiceStudio engine ids this app may request. Never send aliases or voxcpm2. */
+export const PINNED_TTS_MODELS = ["omnivoice", "kittentts"] as const;
+
+export const TTS_HEALTH_TIMEOUT_MS = 8_000;
+export const TTS_WARM_TIMEOUT_MS = 60_000;
+export const TTS_COLD_TIMEOUT_MS = 180_000;
+export const TTS_WARMUP_TEXT = "The voice engine is ready.";
+
+export function modelLabel(model: string): string {
+  if (model === "kittentts") return "KittenTTS";
+  if (model === "omnivoice") return "OmniVoice";
+  return model;
+}
+
+export function isForbiddenTtsModel(id: string): boolean {
+  const n = id.trim().toLowerCase();
+  return n === "voxcpm2" || n === "tts-1" || n === "tts-1-hd" || n === "gpt-4o-mini-tts";
+}
+
+export function isLoadingVoiceError(message: string): boolean {
+  const n = message.toLowerCase();
+  return (
+    n.includes("loading voice engine") ||
+    n.includes("still starting") ||
+    n.includes("timed out") ||
+    n.includes("timeout") ||
+    n.includes("aborted") ||
+    n.includes("backend died") ||
+    n.includes("event loop") ||
+    n.includes("could not reach")
+  );
+}
+
 export const TTS_MODELS = [
   {
     id: "omnivoice",
@@ -19,6 +52,7 @@ export const TTS_MODELS = [
 export type TtsModelId = (typeof TTS_MODELS)[number]["id"];
 
 export function isTtsModelId(id: string): id is TtsModelId {
+  if (isForbiddenTtsModel(id)) return false;
   return TTS_MODELS.some((model) => model.id === id);
 }
 
@@ -59,9 +93,12 @@ export function voiceStudioVoice(model: string, voiceId: string): string {
 
 export type TtsProvider = "voicestudio" | "xai" | "none";
 
+export type TtsEngineState = "ready" | "loading" | "unavailable";
+
 export type TtsStatus = {
   provider: TtsProvider;
   model: string | null;
+  state: TtsEngineState;
   voicestudioUp: boolean;
   xaiConfigured: boolean;
   message: string;

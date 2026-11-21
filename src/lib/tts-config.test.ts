@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isForbiddenTtsModel,
   isTtsModelId,
   kittenVoiceId,
   voiceInstruction,
@@ -27,5 +28,12 @@ describe("tts-config", () => {
 
   it("builds an instruction from the voice note", () => {
     assert.match(voiceInstruction("leo"), /steady, british/i);
+  });
+
+  it("rejects voxcpm2 and OpenAI alias ids", () => {
+    assert.equal(isForbiddenTtsModel("voxcpm2"), true);
+    assert.equal(isForbiddenTtsModel("tts-1"), true);
+    assert.equal(isTtsModelId("voxcpm2"), false);
+    assert.equal(isTtsModelId("tts-1"), false);
   });
 });

@@ -14,13 +14,13 @@ import {
   Trash2,
   Volume2,
 } from "lucide-react";
-import { getTtsStatus, synthesizeSpeech } from "@/lib/tts.functions";
+import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.functions";
 import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, type ThemeName } from "@/lib/appearance";
 import { SPEED_OPTIONS, useLane } from "@/lib/lane-store";
 import { DEVICE_VOICE, voiceById, voiceForCard, VOICES, type Voice } from "@/lib/voices";
 import { splitSpeakable } from "@/lib/sentences";
-import { TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
+import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
@@ -174,13 +174,29 @@ export function LaneApp() {
 
   useEffect(() => {
     let cancelled = false;
-    void getTtsStatus().then((status) => {
-      if (!cancelled) setTtsStatus(status);
-    }).catch(() => {});
+    setTtsStatus((current) => ({
+      provider: current?.provider ?? "voicestudio",
+      model: ttsModel,
+      state: "loading",
+      voicestudioUp: Boolean(current?.voicestudioUp),
+      xaiConfigured: Boolean(current?.xaiConfigured),
+      message: `Loading voice engine (${modelLabel(ttsModel)}). The first load can take a minute.`,
+    }));
+    void prepareTtsEngine({ data: { model: ttsModel } })
+      .then((status) => {
+        if (!cancelled) setTtsStatus(status);
+      })
+      .catch(() => {
+        void getTtsStatus()
+          .then((status) => {
+            if (!cancelled) setTtsStatus(status);
+          })
+          .catch(() => {});
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [ttsModel]);
 
   useEffect(() => {
     const onVis = () => {
@@ -277,20 +293,52 @@ export function LaneApp() {
     const key = audioCacheKey(voice, text, model, speed);
     const hit = audioCache.get(key);
     if (hit) return { key, url: hit.url, speedApplied: hit.speedApplied, provider: "cache" as const };
-    const result = await synthesizeSpeech({ data: { text, voiceId: voice, speed, model }, signal });
+    const request = () => synthesizeSpeech({ data: { text, voiceId: voice, speed, model }, signal });
+    let result = await request();
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok && (result.loading || isLoadingVoiceError(result.error))) {
+      setTtsStatus((current) => ({
+        provider: current?.provider ?? "voicestudio",
+        model,
+        state: "loading",
+        voicestudioUp: Boolean(current?.voicestudioUp),
+        xaiConfigured: Boolean(current?.xaiConfigured),
+        message: result.ok ? current?.message ?? "" : result.error,
+      }));
+      result = await request();
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    }
+    if (!result.ok) {
+      const loading = Boolean(result.loading) || isLoadingVoiceError(result.error);
+      const message = loading && !isLoadingVoiceError(result.error)
+        ? `Loading voice engine. ${result.error}`
+        : loading && !result.error.toLowerCase().includes("loading voice engine")
+          ? "Loading voice engine. The first load can take a minute on this computer."
+          : result.error;
+      if (loading) {
+        setTtsStatus((current) => ({
+          provider: current?.provider ?? "voicestudio",
+          model,
+          state: "loading",
+          voicestudioUp: Boolean(current?.voicestudioUp),
+          xaiConfigured: Boolean(current?.xaiConfigured),
+          message,
+        }));
+      }
+      throw new Error(message);
+    }
     const url = b64ToUrl(result.audio, result.mime);
     remember(key, { url, speedApplied: result.speedApplied });
     if (result.provider === "voicestudio" || result.provider === "xai") {
       setTtsStatus((current) => ({
         provider: result.provider,
         model: result.model,
+        state: "ready",
         voicestudioUp: result.provider === "voicestudio" || Boolean(current?.voicestudioUp),
         xaiConfigured: result.provider === "xai" || Boolean(current?.xaiConfigured),
         message:
           result.provider === "voicestudio"
-            ? `Using local VoiceStudio (${result.model === "kittentts" ? "KittenTTS" : "OmniVoice"}).`
+            ? `Using local VoiceStudio (${modelLabel(result.model)}).`
             : "VoiceStudio is not running. Using the xAI cloud voice.",
       }));
     }
@@ -506,6 +554,24 @@ export function LaneApp() {
       advanceRef.current(nextIndex);
     } catch (err) {
       if (isAbort(err) || token !== gen.current) return;
+      const failed = err instanceof Error ? err.message : "Could not read that card.";
+      if (voice.id !== "device" && isLoadingVoiceError(failed)) {
+        setNote(null);
+        setError(null);
+        setTtsStatus((current) => ({
+          provider: current?.provider ?? "voicestudio",
+          model: useLane.getState().ttsModel,
+          state: "loading",
+          voicestudioUp: Boolean(current?.voicestudioUp),
+          xaiConfigured: Boolean(current?.xaiConfigured),
+          message: failed.toLowerCase().includes("loading voice engine")
+            ? failed
+            : "Loading voice engine. The first load can take a minute on this computer.",
+        }));
+        setPhase("paused");
+        void releaseScreen();
+        return;
+      }
       if (voice.id !== "device") {
         setNote(
           "Generated audio was not available, so this card is using the browser's device voice. Leo, Eve and the others will sound the same until VoiceStudio is running or an xAI key is set.",
@@ -902,7 +968,7 @@ export function LaneApp() {
           )}
 
           {ttsStatus && !note ? (
-            <p className="mt-3 text-sm text-muted" role="status">
+            <p className={"mt-3 text-sm " + (ttsStatus.state === "loading" ? "text-fg" : "text-muted")} role="status">
               {ttsStatus.message}
             </p>
           ) : null}
