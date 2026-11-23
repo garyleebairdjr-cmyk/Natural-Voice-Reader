@@ -181,7 +181,7 @@ export function useGoogleSession(): {
     try {
       const access = await token("consent");
       await afterSignIn(access);
-      setNote("Signed in. Settings will sync to the Natural Text Reader folder in your Google Drive.");
+      setNote("Signed in. Settings will sync to the Natural Voice Reader folder in your Google Drive.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in with Google.");
     } finally {
@@ -279,14 +279,14 @@ export function useGoogleSession(): {
       }
     }
     if (shouldUploadToDrive({ signedIn, saveToDrive: optedIn, introSeen: true })) {
-      if (!folders) throw new Error("The Natural Text Reader folder is not ready yet. Try again in a moment.");
+      if (!folders) throw new Error("The Natural Voice Reader folder is not ready yet. Try again in a moment.");
       setProgress(0);
       setNote("Uploading to Google Drive…");
       try {
         const access = await token("");
         const blob = await fetch(objectUrl).then((res) => res.blob());
         await uploadDownloadFile(access, folders.downloads.id, blob, filename, (percent) => setProgress(percent));
-        setNote(`Saved ${filename} to Natural Text Reader/Downloads in Google Drive.`);
+        setNote(`Saved ${filename} to Natural Voice Reader/Downloads in Google Drive.`);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not upload that download to Google Drive.");
         setProgress(null);
@@ -346,7 +346,7 @@ export function useGoogleSession(): {
                 Save downloads to Google Drive
               </span>
               <span className="mt-1 block text-xs leading-relaxed text-muted">
-                Off by default. When this is on, Download also uploads the audio to Natural Text Reader/Downloads in your Drive. A local file is still saved. You can turn this off at any time.
+                Off by default. When this is on, Download also uploads the audio to Natural Voice Reader/Downloads in your Drive. A local file is still saved. You can turn this off at any time.
               </span>
             </span>
           </label>
@@ -388,7 +388,7 @@ export function useGoogleSession(): {
       <div className="nvr-dialog" role="alertdialog" aria-modal="true" aria-labelledby="nvr-drive-intro-title">
         <h2 id="nvr-drive-intro-title" className="text-base font-semibold text-fg">Save downloads to Google Drive?</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          You can also keep a copy of downloaded audio in <strong className="font-semibold text-fg">Natural Text Reader/Downloads</strong> in your Google Drive. This is off unless you turn it on. A local file is still saved either way.
+          You can also keep a copy of downloaded audio in <strong className="font-semibold text-fg">Natural Voice Reader/Downloads</strong> in your Google Drive. This is off unless you turn it on. A local file is still saved either way.
         </p>
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button type="button" className="min-h-11 rounded-full border border-line px-4 text-sm font-semibold text-fg" onClick={() => { intro.resolve("local-only"); setIntro(null); }}>

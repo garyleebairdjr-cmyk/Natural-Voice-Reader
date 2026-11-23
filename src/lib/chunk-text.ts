@@ -1,3 +1,5 @@
+import { splitSentences } from "./sentences.ts";
+
 export type Card = { id: string; text: string };
 
 /** One spoken card. Longer pastes and pages are split into several. */
@@ -6,11 +8,6 @@ export const CARD_MAX = 5000;
 function newId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function splitSentences(block: string): string[] {
-  const parts = block.match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g);
-  return (parts ?? [block]).map((s) => s.trim()).filter(Boolean);
 }
 
 function pack(block: string): string[] {

@@ -52,6 +52,32 @@ export function toggleFavoriteVoice(list: string[], id: string, max = MAX_FAVORI
   return normalizeVoiceIdList([...list, id], max);
 }
 
+/**
+ * What happens when a card finishes:
+ * - card: stop; Play or Next continues.
+ * - queue: play the next card, and stop after the last one.
+ * - loop: play the next card, and go back to the first after the last one.
+ */
+export type PlayMode = "card" | "queue" | "loop";
+export const DEFAULT_PLAY_MODE: PlayMode = "card";
+
+export function isPlayMode(value: unknown): value is PlayMode {
+  return value === "card" || value === "queue" || value === "loop";
+}
+
+/** Index for the Next button: always moves ahead, and wraps to the first card only in loop mode. */
+export function cardForNext(fromIndex: number, count: number, mode: PlayMode): number | null {
+  if (count <= 0) return null;
+  const next = fromIndex + 1;
+  if (next < count) return next;
+  return mode === "loop" ? 0 : null;
+}
+
+/** Index of the card to play automatically after `fromIndex` ends, or null to stop. */
+export function cardAfterFinish(fromIndex: number, count: number, mode: PlayMode): number | null {
+  return mode === "card" ? null : cardForNext(fromIndex, count, mode);
+}
+
 export type LaneSpeed = 0.9 | 1 | 1.15 | 1.35;
 
 export type LaneSettingsSnapshot = {
@@ -137,6 +163,13 @@ export function migrateLaneState(persisted: unknown, version: number): Record<st
       theme: isThemeName(next.theme) ? next.theme : "system",
       ink: migrateInk(next.ink),
     };
+  }
+  if (version < 8) {
+    // The old Repeat toggle: on meant loop the queue; off now means stop after each card.
+    const { repeat, ...rest } = next;
+    next = { ...rest, playMode: repeat === true ? "loop" : DEFAULT_PLAY_MODE };
+  } else {
+    next = { ...next, playMode: isPlayMode(next.playMode) ? next.playMode : DEFAULT_PLAY_MODE };
   }
   return next;
 }

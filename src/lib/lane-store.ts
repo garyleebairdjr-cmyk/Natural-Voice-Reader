@@ -10,8 +10,11 @@ import {
   DEFAULT_VOLUME,
   MAX_FAVORITE_VOICES,
   MAX_RECENT_VOICES,
+  DEFAULT_PLAY_MODE,
+  isPlayMode,
   migrateLaneState,
   normalizeVoiceIdList,
+  type PlayMode,
   rememberRecentVoice,
   toggleFavoriteVoice,
 } from "@/lib/lane-persist";
@@ -25,6 +28,10 @@ export {
   migrateLaneState,
   readLaneSettings,
   rememberRecentVoice,
+  cardAfterFinish,
+  cardForNext,
+  DEFAULT_PLAY_MODE,
+  type PlayMode,
   SETTINGS_BREAKPOINT,
   toggleFavoriteVoice,
   type LaneSettingsSnapshot,
@@ -48,7 +55,7 @@ type LaneState = {
   volume: number;
   muted: boolean;
   speed: Speed;
-  repeat: boolean;
+  playMode: PlayMode;
   theme: ThemeName;
   ink: string;
   seeded: boolean;
@@ -65,7 +72,7 @@ type LaneState = {
   toggleSettings: () => void;
   toggleFavorite: (id: string) => void;
   setSpeed: (speed: Speed) => void;
-  setRepeat: (repeat: boolean) => void;
+  setPlayMode: (playMode: PlayMode) => void;
   setTheme: (theme: ThemeName) => void;
   setInk: (ink: string) => void;
   setIndex: (index: number) => void;
@@ -105,7 +112,7 @@ export const useLane = create<LaneState>()(
       volume: DEFAULT_VOLUME,
       muted: false,
       speed: 1,
-      repeat: false,
+      playMode: DEFAULT_PLAY_MODE,
       theme: "system",
       ink: defaultInk(),
       seeded: true,
@@ -134,7 +141,7 @@ export const useLane = create<LaneState>()(
           favoriteVoiceIds: toggleFavoriteVoice(state.favoriteVoiceIds, id),
         })),
       setSpeed: (speed) => set({ speed }),
-      setRepeat: (repeat) => set({ repeat }),
+      setPlayMode: (playMode) => set({ playMode: isPlayMode(playMode) ? playMode : DEFAULT_PLAY_MODE }),
       setTheme: (theme) => set({ theme }),
       setInk: (ink) => set({ ink }),
       setIndex: (index) => set({ index: clampIndex(index, get().cards.length) }),
@@ -160,7 +167,7 @@ export const useLane = create<LaneState>()(
     {
       name: "lane-reader",
       skipHydration: true,
-      version: 7,
+      version: 8,
       migrate: migrateLaneState,
       partialize: (s) => ({
         cards: s.cards,
@@ -172,7 +179,7 @@ export const useLane = create<LaneState>()(
         volume: clampVolume(s.volume),
         muted: Boolean(s.muted),
         speed: s.speed,
-        repeat: s.repeat,
+        playMode: isPlayMode(s.playMode) ? s.playMode : DEFAULT_PLAY_MODE,
         theme: s.theme,
         ink: s.ink,
         seeded: s.seeded,

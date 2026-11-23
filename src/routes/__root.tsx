@@ -4,7 +4,7 @@ import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 import { THEME_BOOT_SCRIPT } from "@/lib/appearance";
 
-const APP_NAME = "Natural Web and Text Voice Reader";
+const APP_NAME = "Natural Voice Reader";
 
 export const Route = createRootRoute({
   head: () => ({

@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { extractPageText } from "@/lib/page-text";
 
 const MAX_BYTES = 1_500_000;
 const MAX_TEXT = 50_000;
@@ -73,49 +74,6 @@ async function assertPublicHost(url: URL) {
   }
 }
 
-function decodeEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&/gi, "&")
-    .replace(/</gi, "<")
-    .replace(/>/gi, ">")
-    .replace(/"/gi, '"')
-    .replace(/&#39;|'/gi, "'")
-    .replace(/&#(\d+);/g, (_, n: string) => {
-      const code = Number(n);
-      return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : "";
-    })
-    .replace(/&#x([0-9a-f]+);/gi, (_, n: string) => {
-      const code = Number.parseInt(n, 16);
-      return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : "";
-    });
-}
-
-function htmlToText(html: string): string {
-  const stripped = html
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
-    .replace(/<nav\b[\s\S]*?<\/nav>/gi, " ")
-    .replace(/<footer\b[\s\S]*?<\/footer>/gi, " ")
-    .replace(/<form\b[\s\S]*?<\/form>/gi, " ");
-  const main =
-    stripped.match(/<article\b[\s\S]*?<\/article>/i)?.[0] ??
-    stripped.match(/<main\b[\s\S]*?<\/main>/i)?.[0] ??
-    stripped.match(/<body\b[\s\S]*?<\/body>/i)?.[0] ??
-    stripped;
-  const broken = main
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|h1|h2|h3|h4|li|tr|blockquote|section)>/gi, "\n");
-  return decodeEntities(broken.replace(/<[^>]+>/g, " "))
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-}
-
 async function readBody(res: Response): Promise<string> {
   const reader = res.body?.getReader();
   if (!reader) return "";
@@ -183,7 +141,14 @@ export const readPage = createServerFn({ method: "POST" })
           return { ok: false as const, error: "That link isn't a text page." };
         }
         const body = await readBody(res);
-        const text = /html|xml/.test(type) || /<html|<body|<p[\s>]/i.test(body) ? htmlToText(body) : body.trim();
+        let text = body.trim();
+        if (/html|xml/.test(type) || /<html|<body|<p[\s>]/i.test(body)) {
+          const page = extractPageText(body);
+          // Lead with the headline unless the article already opens with it.
+          const opensWithTitle = page.title && page.text.slice(0, page.title.length + 20).includes(page.title);
+          const heading = /[.!?:]$/.test(page.title) ? page.title : `${page.title}.`;
+          text = page.title && !opensWithTitle ? `${heading}\n\n${page.text}` : page.text;
+        }
         const collapsed = text.replace(/\s+/g, " ").trim();
         if (collapsed.length < 40) {
           return {
