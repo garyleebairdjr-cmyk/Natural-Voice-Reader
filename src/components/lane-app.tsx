@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   Link2,
+  ListEnd,
   Loader2,
+  RectangleHorizontal,
   Monitor,
   Moon,
   PanelRight,
@@ -23,12 +25,24 @@ import { Toaster, toast } from "sonner";
 import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.functions";
 import { readPage } from "@/lib/read-page.functions";
 import { defaultInk, inksFor, inkFits, migrateInk, resolveTheme, type ThemeName } from "@/lib/appearance";
-import { defaultLaneSettings, defaultSettingsOpen, effectiveGain, readLaneSettings, SETTINGS_BREAKPOINT, SPEED_OPTIONS, useLane } from "@/lib/lane-store";
+import {
+  cardAfterFinish,
+  cardForNext,
+  defaultLaneSettings,
+  defaultSettingsOpen,
+  effectiveGain,
+  readLaneSettings,
+  SETTINGS_BREAKPOINT,
+  SPEED_OPTIONS,
+  useLane,
+  type PlayMode,
+} from "@/lib/lane-store";
 import { DEVICE_VOICE, canonicalVoiceId, isVoiceId, voiceAccentLabel, voiceById, voiceForCardIn, VOICES, type Voice } from "@/lib/voices";
 import { splitForStreaming } from "@/lib/sentences";
 import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
 import { resolveSpeechRoute } from "@/lib/voice-routing";
 import { applyPlayback } from "@/lib/soft-room";
+import { joinClips } from "@/lib/audio-join";
 import { listVoicePacks } from "@/lib/voice-packs.functions";
 import { voicesInInstalledPacks, type VoicePackStatus } from "@/lib/voice-packs";
 import { VoicePackSettings } from "@/components/voice-pack-settings";
@@ -37,6 +51,12 @@ import { useGoogleSession } from "@/components/google-session";
 import { VOICE_PREVIEW_LINE } from "@/lib/voice-picker";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
+
+const PLAY_MODE_OPTIONS: { value: PlayMode; label: string; hint: string; icon: typeof Repeat }[] = [
+  { value: "card", label: "Card", hint: "Stop when this card ends. Play continues with the next card.", icon: RectangleHorizontal },
+  { value: "queue", label: "Queue", hint: "Play every card, then stop after the last one.", icon: ListEnd },
+  { value: "loop", label: "Loop", hint: "Play every card, then start again from the first.", icon: Repeat },
+];
 
 type CachedClip = { url: string; speedApplied: boolean };
 type PreparedClip = { key: string; url: string; speedApplied: boolean; provider: "cache" | "voicestudio" | "kokoro" | "xai" };
@@ -74,7 +94,7 @@ export function LaneApp() {
   const voiceId = useLane((s) => s.voiceId);
   const rotate = useLane((s) => s.rotate);
   const speed = useLane((s) => s.speed);
-  const repeat = useLane((s) => s.repeat);
+  const playMode = useLane((s) => s.playMode);
   const ttsModel = useLane((s) => s.ttsModel);
   const setVoice = useLane((s) => s.setVoice);
   const setRotate = useLane((s) => s.setRotate);
@@ -91,7 +111,7 @@ export function LaneApp() {
   const recentVoiceIds = useLane((s) => s.recentVoiceIds);
   const toggleFavorite = useLane((s) => s.toggleFavorite);
   const setSpeed = useLane((s) => s.setSpeed);
-  const setRepeat = useLane((s) => s.setRepeat);
+  const setPlayMode = useLane((s) => s.setPlayMode);
   const theme = useLane((s) => s.theme);
   const ink = useLane((s) => s.ink);
   const setTheme = useLane((s) => s.setTheme);
@@ -116,8 +136,6 @@ export function LaneApp() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const google = useGoogleSession();
   const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
-  const [pieceIndex, setPieceIndex] = useState(0);
-  const [pieceCount, setPieceCount] = useState(1);
   const [packs, setPacks] = useState<VoicePackStatus[] | null>(null);
   const [wide, setWide] = useState(true);
   const [confirmAction, setConfirmAction] = useState<null | "clear" | "reset">(null);
@@ -159,6 +177,8 @@ export function LaneApp() {
   const modeRef = useRef<"lane" | "audition">("lane");
   const wakeRef = useRef<WakeLockSentinel | null>(null);
   const advanceRef = useRef<(fromIndex: number) => void>(() => {});
+  /** Which spoken piece of the current card is loaded, so progress covers the whole card. */
+  const pieceRef = useRef({ index: 0, count: 1 });
 
   const phaseRef = useRef<Phase>("idle");
   phaseRef.current = phase;
@@ -236,7 +256,13 @@ export function LaneApp() {
     if (!audio) return;
     const onTime = () => {
       const d = audio.duration;
-      setProgress(d && Number.isFinite(d) ? audio.currentTime / d : 0);
+      const within = d && Number.isFinite(d) ? audio.currentTime / d : 0;
+      if (modeRef.current === "lane") {
+        const { index: piece, count } = pieceRef.current;
+        setProgress(Math.min(1, (piece + within) / Math.max(1, count)));
+      } else {
+        setProgress(within);
+      }
     };
     const onEnd = () => {
       if (endedWaiter.current) {
@@ -423,7 +449,7 @@ export function LaneApp() {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: label,
       artist,
-      album: "Natural Web and Text Voice Reader",
+      album: "Natural Voice Reader",
     });
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
   }
@@ -629,19 +655,23 @@ export function LaneApp() {
 
   function advanceAfter(fromIndex: number) {
     const state = useLane.getState();
-    const next = fromIndex + 1;
-    if (next < state.cards.length) {
-      void playAtRef.current(next);
-      return;
-    }
-    if (state.repeat && state.cards.length > 0) {
-      void playAtRef.current(0);
+    const upcoming = cardAfterFinish(fromIndex, state.cards.length, state.playMode);
+    if (upcoming !== null) {
+      void playAtRef.current(upcoming);
       return;
     }
     setPhase("idle");
-    setProgress(1);
     playingId.current = null;
+    loadedKey.current = null;
     void releaseScreen();
+    // In card mode, cue the next card so Play continues instead of repeating this one.
+    const cued = state.playMode === "card" ? cardForNext(fromIndex, state.cards.length, "queue") : null;
+    if (cued !== null) {
+      state.setIndex(cued);
+      setProgress(0);
+    } else {
+      setProgress(1);
+    }
     const current = state.cards[fromIndex];
     if (current) {
       publishSession(current.text, voiceForCardIn(installedVoices, fromIndex, state.voiceId, state.rotate).name, false);
@@ -652,10 +682,10 @@ export function LaneApp() {
   async function playGeneratedPieces(pieces: string[], voice: string, token: number, startAt: number) {
     const audio = audioRef.current;
     if (!audio) return;
-    setPieceCount(pieces.length);
+    pieceRef.current.count = pieces.length;
     for (let i = startAt; i < pieces.length; i++) {
       if (token !== gen.current || modeRef.current !== "lane") return;
-      setPieceIndex(i);
+      pieceRef.current.index = i;
       const piece = pieces[i]!;
       prefetchUpcoming(pieces, i, useLane.getState().index, voice);
       const { key, url, speedApplied } = await ensureAudio(piece, voice, abortRef.current?.signal);
@@ -693,8 +723,7 @@ export function LaneApp() {
     setError(null);
     setNote(null);
     setAuditionId(null);
-    setPieceIndex(0);
-    setPieceCount(1);
+    pieceRef.current = { index: 0, count: 1 };
     modeRef.current = "lane";
 
     const markPlaying = () => {
@@ -720,6 +749,7 @@ export function LaneApp() {
         setPhase("idle");
         return;
       }
+      pieceRef.current = { index: 0, count: pieces.length };
       const first = await ensureAudio(pieces[0]!, voice.id, ac.signal);
       if (token !== gen.current) return;
       const audio = audioRef.current;
@@ -736,8 +766,6 @@ export function LaneApp() {
         return;
       }
       markPlaying();
-      setPieceCount(pieces.length);
-      setPieceIndex(0);
       await waitForAudioEnd(token);
       if (token !== gen.current || modeRef.current !== "lane") return;
       if (pieces.length > 1) {
@@ -841,13 +869,8 @@ export function LaneApp() {
 
   function next() {
     const state = useLane.getState();
-    if (state.cards.length === 0) return;
-    const upcoming = state.index + 1;
-    if (upcoming >= state.cards.length) {
-      if (state.repeat) void playAt(0);
-      return;
-    }
-    void playAt(upcoming);
+    const upcoming = cardForNext(state.index, state.cards.length, state.playMode);
+    if (upcoming !== null) void playAt(upcoming);
   }
   const nextRef = useRef(next);
   nextRef.current = next;
@@ -1109,16 +1132,26 @@ export function LaneApp() {
     setDownloadingId(item.id);
     setError(null);
     try {
+      // Same pieces as playback, so anything already heard comes from the cache.
       const pieces = splitForStreaming(item.text);
-      const first = pieces[0] ?? item.text;
-      const source = item.text.length <= 4096 ? item.text : first;
-      const { url } = await ensureAudio(source, voice.id);
-      if (source !== item.text) {
-        setNote("This card is longer than the voice service allows in one file, so the download is the opening sentences. Play the card to hear the rest.");
+      const clips: Blob[] = [];
+      for (let i = 0; i < pieces.length; i++) {
+        if (pieces.length > 2) setNote(`Preparing the download: ${i + 1} of ${pieces.length} sentences.`);
+        const { url } = await ensureAudio(pieces[i]!, voice.id);
+        clips.push(await fetch(url).then((res) => res.blob()));
       }
-      const filename = `natural-reader-${String(cardIndex + 1).padStart(2, "0")}-${voice.name.toLowerCase()}.mp3`;
-      await google.api.finishDownload(url, filename);
+      if (pieces.length > 2) setNote(null);
+      const joined = await joinClips(clips);
+      const voiceSlug = voice.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "voice";
+      const filename = `natural-reader-${String(cardIndex + 1).padStart(2, "0")}-${voiceSlug}.${joined.extension}`;
+      const objectUrl = URL.createObjectURL(joined.blob);
+      try {
+        await google.api.finishDownload(objectUrl, filename);
+      } finally {
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      }
     } catch (err) {
+      setNote(null);
       if (!isAbort(err)) setError(err instanceof Error ? err.message : "Could not download that card.");
     } finally {
       setDownloadingId((current) => (current === item.id ? null : current));
@@ -1236,7 +1269,7 @@ export function LaneApp() {
         <header className="flex flex-col gap-3">
           <div className="flex items-start justify-between gap-3">
             <h1 className="min-w-0 flex-1 font-display text-3xl leading-tight font-semibold text-balance text-fg sm:text-4xl">
-              Natural Web and Text Voice Reader
+              Natural Voice Reader
             </h1>
             {settingsToggle()}
           </div>
@@ -1381,18 +1414,24 @@ export function LaneApp() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={() => setRepeat(!repeat)}
-            aria-pressed={repeat}
-            className={
-              "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm font-semibold " +
-              (repeat ? "border-amber bg-raise text-amber" : "border-line bg-surface text-muted")
-            }
-          >
-            <Repeat className="size-4" />
-            Repeat
-          </button>
+          <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="When a card ends">
+            {PLAY_MODE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setPlayMode(opt.value)}
+                aria-pressed={playMode === opt.value}
+                title={opt.hint}
+                className={
+                  "inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-semibold " +
+                  (playMode === opt.value ? "bg-amber text-ink" : "text-muted")
+                }
+              >
+                <opt.icon className="size-4" />
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => setSoftRoom(!softRoom)}

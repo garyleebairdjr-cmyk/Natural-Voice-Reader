@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  cardAfterFinish,
+  cardForNext,
   clampVolume,
   DEFAULT_VOLUME,
   defaultLaneSettings,
@@ -131,5 +133,49 @@ describe("lane settings and voice lists", () => {
     assert.deepEqual(toggleFavoriteVoice(["leo"], "eve"), ["leo", "eve"]);
     assert.deepEqual(toggleFavoriteVoice(["leo", "eve"], "leo"), ["eve"]);
     assert.deepEqual(normalizeVoiceIdList(["eve", 1, "device", "eve"], 8), ["eve", "device"]);
+  });
+});
+
+describe("play mode", () => {
+  it("stops after each card in card mode", () => {
+    assert.equal(cardAfterFinish(0, 3, "card"), null);
+    assert.equal(cardAfterFinish(2, 3, "card"), null);
+  });
+
+  it("plays through and stops after the last card in queue mode", () => {
+    assert.equal(cardAfterFinish(0, 3, "queue"), 1);
+    assert.equal(cardAfterFinish(1, 3, "queue"), 2);
+    assert.equal(cardAfterFinish(2, 3, "queue"), null);
+  });
+
+  it("goes back to the first card after the last in loop mode", () => {
+    assert.equal(cardAfterFinish(1, 3, "loop"), 2);
+    assert.equal(cardAfterFinish(2, 3, "loop"), 0);
+    assert.equal(cardAfterFinish(0, 1, "loop"), 0);
+  });
+
+  it("does nothing for an empty queue", () => {
+    assert.equal(cardAfterFinish(0, 0, "loop"), null);
+    assert.equal(cardForNext(0, 0, "loop"), null);
+  });
+
+  it("lets Next move ahead in every mode and wrap only in loop mode", () => {
+    assert.equal(cardForNext(0, 3, "card"), 1);
+    assert.equal(cardForNext(2, 3, "card"), null);
+    assert.equal(cardForNext(2, 3, "queue"), null);
+    assert.equal(cardForNext(2, 3, "loop"), 0);
+  });
+
+  it("migrates the old Repeat toggle", () => {
+    const on = migrateLaneState({ repeat: true }, 7);
+    assert.equal(on.playMode, "loop");
+    assert.equal("repeat" in on, false);
+    assert.equal(migrateLaneState({ repeat: false }, 7).playMode, "card");
+    assert.equal(migrateLaneState({}, 7).playMode, "card");
+  });
+
+  it("keeps a valid saved mode and repairs an invalid one", () => {
+    assert.equal(migrateLaneState({ playMode: "queue" }, 8).playMode, "queue");
+    assert.equal(migrateLaneState({ playMode: "shuffle" }, 8).playMode, "card");
   });
 });

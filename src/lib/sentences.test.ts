@@ -1,6 +1,26 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { splitForStreaming, splitLeadingClause, splitSpeakable, VOICESTUDIO_MAX_CHARS } from "./sentences.ts";
+import { splitForStreaming, splitLeadingClause, splitSentences, splitSpeakable, VOICESTUDIO_MAX_CHARS } from "./sentences.ts";
+
+describe("splitSentences", () => {
+  const cases: Array<[string, string[]]> = [
+    ["Dr. Smith said pi is 3.14. Next one.", ["Dr. Smith said pi is 3.14.", "Next one."]],
+    ["See e.g. the U.S. Army report. Then Mr. Jones left!", ["See e.g. the U.S. Army report.", "Then Mr. Jones left!"]],
+    ["He said no. Then he left.", ["He said no.", "Then he left."]],
+    ["I love art. It makes me happy.", ["I love art.", "It makes me happy."]],
+    ["Read No. 5 and Fig. 2 today. Done.", ["Read No. 5 and Fig. 2 today.", "Done."]],
+    ["We met at 5 p.m. Then we ate.", ["We met at 5 p.m.", "Then we ate."]],
+    ["Apple Inc. makes phones. It is big.", ["Apple Inc. makes phones.", "It is big."]],
+    ["J. Smith wrote it. They liked it.", ["J. Smith wrote it.", "They liked it."]],
+    ["Wait... what? Yes!", ["Wait... what?", "Yes!"]],
+    ['He said "Stop." Then he left.', ['He said "Stop."', "Then he left."]],
+  ];
+  for (const [input, expected] of cases) {
+    it(`splits ${JSON.stringify(input)}`, () => {
+      assert.deepEqual(splitSentences(input), expected);
+    });
+  }
+});
 
 describe("splitSpeakable", () => {
   it("returns an empty list for blank input", () => {

@@ -1,4 +1,6 @@
-export const APP_FOLDER_NAME = "Natural Text Reader";
+export const APP_FOLDER_NAME = "Natural Voice Reader";
+/** Earlier names of the app folder. A folder still using one is renamed in place. */
+export const LEGACY_APP_FOLDER_NAMES = ["Natural Text Reader"] as const;
 export const SETTINGS_FOLDER_NAME = "Settings";
 export const DOWNLOADS_FOLDER_NAME = "Downloads";
 export const SETTINGS_FILE_NAME = "settings.json";
@@ -21,6 +23,7 @@ export type DriveFile = {
 export type DriveFolderClient = {
   listFiles(query: string): Promise<DriveFile[]>;
   createFolder(name: string, appProperties: Record<string, string>, parentId?: string): Promise<DriveFile>;
+  renameFile?(id: string, name: string): Promise<DriveFile>;
 };
 
 export type AppFolders = {
@@ -66,9 +69,33 @@ async function findOrCreateFolder(
   return client.createFolder(name, { [APP_PROP_KEY]: value }, parentId);
 }
 
-/** Find or create Natural Text Reader / Settings / Downloads without duplicates. */
+/** Rename a root folder that still has an old app name. A name the user chose is left alone. */
+async function renameLegacyRoot(client: DriveFolderClient, root: DriveFile): Promise<DriveFile> {
+  if (root.name === APP_FOLDER_NAME || !(LEGACY_APP_FOLDER_NAMES as readonly string[]).includes(root.name)) return root;
+  if (!client.renameFile) return root;
+  try {
+    const renamed = await client.renameFile(root.id, APP_FOLDER_NAME);
+    return { ...root, ...renamed, name: renamed?.name ?? APP_FOLDER_NAME };
+  } catch {
+    // Keep using the folder under its old name; the rename can happen next sign-in.
+    return root;
+  }
+}
+
+async function findRootFolder(client: DriveFolderClient): Promise<DriveFile> {
+  const byProp = await client.listFiles(appPropertyQuery(APP_PROP_ROOT));
+  const tagged = pickFolder(byProp, APP_FOLDER_NAME, APP_PROP_ROOT);
+  if (tagged) return tagged;
+  for (const name of [APP_FOLDER_NAME, ...LEGACY_APP_FOLDER_NAMES]) {
+    const named = pickFolder(await client.listFiles(folderNameQuery(name)), name, APP_PROP_ROOT);
+    if (named) return named;
+  }
+  return client.createFolder(APP_FOLDER_NAME, { [APP_PROP_KEY]: APP_PROP_ROOT });
+}
+
+/** Find or create Natural Voice Reader / Settings / Downloads without duplicates. */
 export async function ensureAppFolders(client: DriveFolderClient): Promise<AppFolders> {
-  const root = await findOrCreateFolder(client, APP_FOLDER_NAME, APP_PROP_ROOT);
+  const root = await renameLegacyRoot(client, await findRootFolder(client));
   const settings = await findOrCreateFolder(client, SETTINGS_FOLDER_NAME, APP_PROP_SETTINGS, root.id);
   const downloads = await findOrCreateFolder(client, DOWNLOADS_FOLDER_NAME, APP_PROP_DOWNLOADS, root.id);
   return { root, settings, downloads };

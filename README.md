@@ -142,6 +142,12 @@ accent for buttons and highlights. On screens narrower than
 1024px the panel starts collapsed and opens as a slide-over drawer. That
 preference is saved with the rest of the reader settings.
 
+Next to the speed buttons, choose what happens when a card ends. **Card** (the
+default) stops and cues the next card, so Play continues where you left off.
+**Queue** plays every card and stops after the last. **Loop** starts again
+from the first card. The Next button always moves ahead; only Loop wraps from
+the last card to the first.
+
 `Clear queue` removes every card, after a confirmation, and offers Undo.
 `Reset to defaults` restores the voice, speed, volume, engine, and settings
 panel without touching the queue or installed packs.
@@ -212,7 +218,7 @@ compatible local helper.
 
 The reader works fully without an account. If you set a Google client ID, a
 **Sign in with Google** button appears in Settings. After you sign in, the app
-creates a `Natural Text Reader` folder in your Google Drive (with `Settings`
+creates a `Natural Voice Reader` folder in your Google Drive (with `Settings`
 and `Downloads` subfolders) and can:
 
 - Sync appearance, voice, speed, volume, favorites, recents, and panel state to
@@ -223,6 +229,10 @@ and `Downloads` subfolders) and can:
   downloads to Google Drive** (off by default). A local file is still saved.
 
 Sign-out revokes the access token and clears Google state on this device.
+
+Earlier versions named this folder `Natural Text Reader`. The next time you
+sign in, the app renames that folder in place, so your settings and downloads
+stay where they are. A folder you renamed yourself is left alone.
 
 ### Set up a Google Cloud client (personal account)
 
@@ -282,7 +292,7 @@ npm run build
 
 - Text cards, playback preferences, and the reading queue are persisted in
   browser storage. If you sign in with Google, those preferences (not the
-  queue, and not any tokens) can also sync to the Natural Text Reader folder
+  queue, and not any tokens) can also sync to the Natural Voice Reader folder
   in your Drive.
 - Reading a URL fetches its public page on the server. Some pages may block
   fetching or require a browser to render their content.

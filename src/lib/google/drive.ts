@@ -61,6 +61,13 @@ export function createDriveFolderClient(token: AccessToken): DriveFolderClient {
         }),
       });
     },
+    async renameFile(id, name) {
+      return driveJson<DriveFile>(token, `${DRIVE}/files/${encodeURIComponent(id)}?fields=id,name,mimeType,appProperties,parents`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+    },
   };
 }
 
