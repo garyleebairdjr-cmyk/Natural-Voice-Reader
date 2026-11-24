@@ -34,6 +34,12 @@ if [[ "${1:-}" == "voices" ]]; then
   exec "${py}" "${SCRIPT_DIR}/voice-packs.py" "$@"
 fi
 
+# `nvr say ...` speaks text to a file without starting the reader UI.
+if [[ "${1:-}" == "say" ]]; then
+  shift
+  exec "${SCRIPT_DIR}/nvr-say.sh" "$@"
+fi
+
 VS_ROOT="$(nvr_default_vs_root)"
 VS_HOST="${VOICESTUDIO_HOST:-127.0.0.1}"
 VS_PORT="${VOICESTUDIO_PORT:-3900}"
