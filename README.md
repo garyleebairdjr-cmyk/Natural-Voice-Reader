@@ -99,6 +99,76 @@ authentication disabled for local development. Never expose secrets through a
 `VITE_`-prefixed variable. `scripts/with-app-env.mjs` only loads `VITE_` flags
 from `.grok/app-env.json`; it does not load API keys.
 
+## Command-line speech
+
+`nvr say` (also installed as `nvr-say`) turns text into an MP3 using the same
+local VoiceStudio and Kokoro voices as the reader. It starts only the engine
+the chosen voice needs, writes the file, and stops anything it started. It
+does not open the browser, and it does not stop engines that were already
+running. The default voice is Leo on KittenTTS.
+
+```sh
+nvr say --text "Hello, Gary." --out ~/Music/hello.mp3
+nvr say --voice butler --text "Good evening." --out ~/Music/butler.mp3
+nvr-say --list-voices
+```
+
+You can also pass the text as arguments, or pipe it on stdin:
+
+```sh
+nvr say --out ~/Music/hello.mp3 Hello, Gary.
+echo "Dinner is ready." | nvr say --out /tmp/nvr-say.mp3
+```
+
+`--out -` writes raw MP3 bytes to stdout. Use `--keep` if you are making
+several clips and want VoiceStudio or Kokoro to stay up. Use `--model omnivoice`
+for the slower high-quality engine on the standard voices. Butler, Mira, and
+Arjun always use Kokoro, so the accent is not replaced.
+
+### Play the clip on a speaker or clock
+
+`clockctl` can play the file on a Cast device such as a Lenovo Smart Clock.
+The usual pattern is to write the MP3, then play it:
+
+```sh
+nvr say --text "Good morning, Gary." --out ~/Music/wake.mp3 && clockctl play ~/Music/wake.mp3
+echo "Dinner is ready." | nvr say --out /tmp/nvr-say.mp3 && clockctl play /tmp/nvr-say.mp3
+```
+
+`clockctl play` needs a file path or an http(s) URL, so pipe the audio bytes
+into it only if you first write a file as shown above.
+
+### Wake-ups and conversations from a bot
+
+A bot on a laptop or phone can use this the same way a person would: produce
+text, ask `nvr say` to speak it, then cast the file.
+
+For a wake-up, a scheduled cron job or a routine can write a short morning
+line and play it on the clock at a set time:
+
+```sh
+nvr say --text "Good morning. It is 6:30, and the coffee is the next thing." \
+  --out ~/Music/wake.mp3 && clockctl play ~/Music/wake.mp3
+```
+
+Keep those clips short, and set the clock volume ahead of time so the morning
+message is not a surprise blast.
+
+For a spoken conversation, the loop is speech-to-text, an LLM reply, this CLI,
+then play or cast:
+
+- Capture a short utterance from a microphone and transcribe it with a local
+  or device speech-to-text tool.
+- Send that text to a language model and take the reply.
+- Run `nvr say --text "$REPLY" --out /tmp/nvr-reply.mp3`.
+- Play the reply with `clockctl play /tmp/nvr-reply.mp3`, or on the local
+  speaker if you are not using a Cast device.
+- Wait until playback finishes, then listen for the next utterance.
+
+The voice work stays on the local engines, so the bot does not need a cloud
+TTS key. You will still need your own speech-to-text and language-model setup
+for the other two steps. This CLI only does the "speak this text" part.
+
 ## Local voices (VoiceStudio)
 
 The reader prefers a local VoiceStudio server and speaks sentence by sentence
@@ -286,6 +356,7 @@ npm run typecheck
 npm test
 npm run lint
 npm run build
+nvr say --text "Hello." --out /tmp/nvr-hello.mp3
 ```
 
 ## Notes

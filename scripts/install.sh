@@ -255,7 +255,35 @@ else
   CHANGES=1
 fi
 
+# --- nvr-say symlink ---
+log "Checking the nvr-say launcher..."
+if [[ -L "${HOME}/.local/bin/nvr-say" || -f "${HOME}/.local/bin/nvr-say" ]]; then
+  SAY_TARGET="$(readlink -f "${HOME}/.local/bin/nvr-say" 2>/dev/null || readlink "${HOME}/.local/bin/nvr-say" || true)"
+  if [[ "${SAY_TARGET}" == "${NVR_ROOT}/scripts/nvr-say.sh" ]]; then
+    skip "nvr-say already points at ${NVR_ROOT}/scripts/nvr-say.sh"
+  else
+    need "nvr-say symlink currently points at ${SAY_TARGET:-something else}"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      plan "ln -sfn ${NVR_ROOT}/scripts/nvr-say.sh ${HOME}/.local/bin/nvr-say"
+    else
+      ln -sfn "${NVR_ROOT}/scripts/nvr-say.sh" "${HOME}/.local/bin/nvr-say"
+      log "  linked ~/.local/bin/nvr-say"
+    fi
+    CHANGES=1
+  fi
+else
+  need "nvr-say symlink"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    plan "ln -sfn ${NVR_ROOT}/scripts/nvr-say.sh ${HOME}/.local/bin/nvr-say"
+  else
+    ln -sfn "${NVR_ROOT}/scripts/nvr-say.sh" "${HOME}/.local/bin/nvr-say"
+    log "  linked ~/.local/bin/nvr-say"
+  fi
+  CHANGES=1
+fi
+
 # --- Models ---
+
 VS_PY="$(nvr_vs_python "${VS_ROOT}")"
 PACKS="${SCRIPT_DIR}/voice-packs.py"
 nvr_migrate_data
@@ -307,5 +335,7 @@ else
   log "  nvr"
   log "or:"
   log "  ${NVR_ROOT}/scripts/nvr.sh"
+  log "To speak text to an MP3 without opening the reader:"
+  log "  nvr say --text \"Hello.\" --out ~/Music/hello.mp3"
   log "VoiceStudio remains a separate AGPL-3.0 project at ${VS_ROOT}."
 fi
