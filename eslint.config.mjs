@@ -10,6 +10,9 @@ export default tseslint.config(
   {
     ignores: [
       "dist/**",
+      // Rust build output and the generated Android project.
+      "src-tauri/target/**",
+      "src-tauri/gen/**",
       ".output/**",
       ".vercel/**",
       ".nitro/**",

@@ -11,6 +11,34 @@ import { grokPwaPlugin } from "./scripts/grok-pwa-plugin.mjs";
 // @ts-expect-error JS plugin alongside the TS vite config
 import { appEnvPlugin } from "./scripts/app-env-plugin.mjs";
 import { isMigrationFile } from "./scripts/migration-plan.mjs";
+import { appVersion, buildInfo } from "./scripts/build-info.mjs";
+
+/**
+ * Version, build number, and commit for the UI (src/lib/build-info.ts).
+ * scripts/tauri.mjs passes them in the environment; other builds compute them,
+ * and a host with a shallow clone (no commit count) gets build 0.
+ */
+function appBuildDefines(): Record<string, string> {
+  let info: { version: string; build: number | string; commit: string };
+  if (process.env.NVR_BUILD_NUMBER && process.env.NVR_BUILD_COMMIT) {
+    info = {
+      version: process.env.NVR_APP_VERSION ?? appVersion(),
+      build: process.env.NVR_BUILD_NUMBER,
+      commit: process.env.NVR_BUILD_COMMIT,
+    };
+  } else {
+    try {
+      info = buildInfo();
+    } catch {
+      info = { version: appVersion(), build: 0, commit: (process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown").slice(0, 7) };
+    }
+  }
+  return {
+    __APP_VERSION__: JSON.stringify(String(info.version)),
+    __APP_BUILD__: JSON.stringify(String(info.build)),
+    __APP_COMMIT__: JSON.stringify(String(info.commit)),
+  };
+}
 
 /** The files `src/lib/db.ts` globs — same directory, same non-recursive scope. */
 function hasGlobbedMigrations(root: string): boolean {
@@ -156,6 +184,7 @@ export default defineConfig(({ command, isPreview, mode }) => {
   if (mode === "desktop") process.env.NVR_TARGET = "desktop";
   const desktop = process.env.NVR_TARGET === "desktop";
   return {
+  define: appBuildDefines(),
   server: {
     host: "0.0.0.0",
     port: 8080,

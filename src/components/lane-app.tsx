@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { getTtsStatus, isDesktopApp, prepareTtsEngine, synthesizeSpeech } from "@/lib/platform";
+import { APP_VERSION_LABEL } from "@/lib/build-info";
 import { readPage } from "@/lib/platform";
 import { defaultInk, inksFor, inkFits, migrateInk, resolveTheme, type ThemeName } from "@/lib/appearance";
 import {
@@ -1706,6 +1707,7 @@ export function LaneApp() {
           {voicePicker(false)}
         </div>
 
+        <p className="mt-auto text-xs text-muted">{APP_VERSION_LABEL}</p>
         </div>
       </aside>
       </div>

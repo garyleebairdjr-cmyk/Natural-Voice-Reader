@@ -22,8 +22,10 @@
     "dev:desktop": "node scripts/with-app-env.mjs vite dev --mode desktop --host 127.0.0.1 --port 1420 --strictPort",
     "build:desktop": "node scripts/with-app-env.mjs vite build --mode desktop",
     "tauri": "tauri",
-    "app:dev": "tauri dev",
-    "app:build": "tauri build",
+    "app:dev": "node scripts/tauri.mjs dev",
+    "app:build": "node scripts/tauri.mjs build",
+    "app:android": "node scripts/tauri.mjs android build --apk",
+    "build:info": "node scripts/build-info.mjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "app:setup": "bash scripts/setup-app-build.sh"
   },
