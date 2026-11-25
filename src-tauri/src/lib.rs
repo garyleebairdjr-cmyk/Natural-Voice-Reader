@@ -4,6 +4,7 @@
 //! (`npm run build:desktop`). Anything the web build does on its Node server
 //! is a Tauri command here; see `src/lib/platform/` on the TypeScript side.
 
+mod applog;
 mod packs;
 mod page;
 mod speech;
@@ -72,6 +73,8 @@ async fn synthesize(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "android")]
+    applog::install_panic_hook();
     let packs = Arc::new(Packs::default());
     tauri::Builder::default()
         .setup({
@@ -82,7 +85,7 @@ pub fn run() {
                 // app Context before any TLS connection is made.
                 #[cfg(target_os = "android")]
                 if let Err(e) = init_android_tls() {
-                    eprintln!("Android TLS setup failed: {e}");
+                    applog::error(&format!("Android TLS setup failed: {e}"));
                 }
                 packs.first_run_install(packs::sherpa_root(app.handle()));
                 Ok(())
