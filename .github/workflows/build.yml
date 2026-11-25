@@ -115,20 +115,6 @@ jobs:
           workspaces: src-tauri -> target
           shared-key: desktop-${{ matrix.name }}
 
-      - name: Re-run the sherpa-onnx build script
-        # sherpa-onnx-sys downloads its native libraries into
-        # src-tauri/target/sherpa-onnx-prebuilt and points the linker there.
-        # rust-cache restores the record that the build script already ran but
-        # not that folder, so the link fails with "unable to find library
-        # -lsherpa-onnx-c-api". Removing the crate's build output and
-        # fingerprints makes Cargo run the script again, which re-downloads.
-        shell: bash
-        run: |
-          shopt -s nullglob globstar
-          stale=(src-tauri/target/**/build/sherpa-onnx-sys-* src-tauri/target/**/.fingerprint/sherpa-onnx-sys-*)
-          echo "Removing ${#stale[@]} cached sherpa-onnx-sys build entries"
-          rm -rf "${stale[@]}"
-
       - name: Install npm packages
         run: npm ci
 
@@ -203,18 +189,14 @@ jobs:
           shared-key: android-aarch64
 
       - name: Re-run the sherpa-onnx build script
-        # sherpa-onnx-sys downloads its native libraries into
+        # sherpa-onnx-sys downloads its Android shared libraries into
         # src-tauri/target/sherpa-onnx-prebuilt and points the linker there.
         # rust-cache restores the record that the build script already ran but
         # not that folder, so the link fails with "unable to find library
-        # -lsherpa-onnx-c-api". Removing the crate's build output and
-        # fingerprints makes Cargo run the script again, which re-downloads.
-        shell: bash
-        run: |
-          shopt -s nullglob globstar
-          stale=(src-tauri/target/**/build/sherpa-onnx-sys-* src-tauri/target/**/.fingerprint/sherpa-onnx-sys-*)
-          echo "Removing ${#stale[@]} cached sherpa-onnx-sys build entries"
-          rm -rf "${stale[@]}"
+        # -lsherpa-onnx-c-api". Cleaning the crate makes Cargo run the script
+        # again, which re-downloads. (Desktop builds link static libraries that
+        # are bundled into the crate, so they do not need this.)
+        run: cargo clean -p sherpa-onnx-sys --target aarch64-linux-android --manifest-path src-tauri/Cargo.toml
 
       - name: Install npm packages
         run: npm ci
