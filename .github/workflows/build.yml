@@ -193,10 +193,15 @@ jobs:
         # src-tauri/target/sherpa-onnx-prebuilt and points the linker there.
         # rust-cache restores the record that the build script already ran but
         # not that folder, so the link fails with "unable to find library
-        # -lsherpa-onnx-c-api". Cleaning the crate makes Cargo run the script
-        # again, which re-downloads. (Desktop builds link static libraries that
-        # are bundled into the crate, so they do not need this.)
-        run: cargo clean -p sherpa-onnx-sys --target aarch64-linux-android --manifest-path src-tauri/Cargo.toml
+        # -lsherpa-onnx-c-api". It also restores that folder's directories
+        # without the .so files, which makes the script skip the download and
+        # fail with "No shared runtime libraries found". Removing the folder and
+        # cleaning the crate makes Cargo run the script again, which downloads
+        # fresh libraries. (Desktop builds link static libraries that are
+        # bundled into the crate, so they do not need this.)
+        run: |
+          rm -rf src-tauri/target/sherpa-onnx-prebuilt
+          cargo clean -p sherpa-onnx-sys --target aarch64-linux-android --manifest-path src-tauri/Cargo.toml
 
       - name: Install npm packages
         run: npm ci
