@@ -70,20 +70,31 @@ and AGPL notes.
 
 A packaged app for macOS, Windows, Linux, and Android is being built with
 [Tauri 2](https://tauri.app) in `src-tauri/`. It uses the same reader UI as
-the web build and will speak with native sherpa-onnx voices (Kokoro,
-KittenTTS, Piper), so it will not need Python or VoiceStudio. OmniVoice
-(**Best quality**) stays with the script install above.
+the web build and speaks on the device with
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): KittenTTS for the
+standard voices and Kokoro for Butler, Mira, and Arjun. It needs no Python,
+VoiceStudio, or espeak-ng. Numbers, times, and money are read as words, and
+names that are not in the dictionary are pronounced by a small built-in
+neural model instead of being spelled out.
 
-This first version opens the reader in its own window and reads web pages.
-Every voice uses the device voice for now. Voice packs, generated voices,
-and Google sign-in come in later phases. See
-[docs/desktop-app.md](docs/desktop-app.md) for build steps, the phase plan,
-and how releases and app store listings work.
+On first launch the app downloads the KittenTTS voices (about 67 MB). Kokoro
+is one click in **Settings > Voice packs**. Packs are shared with
+`nvr voices install`. OmniVoice (**Best quality**) stays with the script
+install above, and Google sign-in is not in the app yet.
+
+To build it from source, run the setup script. It checks for Rust, Node.js,
+a C compiler, and the system libraries, and offers to install anything that
+is missing (asking before it uses `sudo`):
 
 ```sh
-npm run app:dev     # run the app window against a live dev server
-npm run app:build   # build installers for this OS into src-tauri/target/release/bundle/
+./scripts/setup-app-build.sh   # Windows: scripts\setup-app-build.ps1 (untested)
+npm run app:dev                # run the app window against a live dev server
+npm run app:build              # build installers into src-tauri/target/release/bundle/
 ```
+
+Linux is built and tested; macOS, Windows, and Android builds come next. See
+[docs/desktop-app.md](docs/desktop-app.md) for how it works, the phase plan,
+and how downloads and app store listings work.
 
 ## Run locally
 
