@@ -77,6 +77,13 @@ pub fn run() {
         .setup({
             let packs = Arc::clone(&packs);
             move |app| {
+                // HTTPS (voice-pack download and page fetch) uses reqwest + rustls.
+                // On Android, rustls-platform-verifier must be initialized with the
+                // app Context before any TLS connection is made.
+                #[cfg(target_os = "android")]
+                if let Err(e) = init_android_tls() {
+                    eprintln!("Android TLS setup failed: {e}");
+                }
                 packs.first_run_install(packs::sherpa_root(app.handle()));
                 Ok(())
             }
@@ -92,4 +99,15 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Natural Voice Reader");
+}
+
+/// Give rustls the Android app Context so reqwest can verify TLS certificates.
+#[cfg(target_os = "android")]
+fn init_android_tls() -> Result<(), jni::errors::Error> {
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
+    vm.attach_current_thread(|env| {
+        let context = unsafe { jni::objects::JObject::from_raw(env, ctx.context().cast()) };
+        rustls_platform_verifier::android::init_with_env(env, context)
+    })
 }
