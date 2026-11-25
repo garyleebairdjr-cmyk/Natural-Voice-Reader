@@ -61,23 +61,79 @@ CHANGES=0
 
 # --- Node.js ---
 log "Checking Node.js ${NODE_MAJOR}+..."
-NODE_OK=0
 if nvr_has_cmd node; then
   MAJOR="$(nvr_node_major)"
   if [[ -n "${MAJOR}" && "${MAJOR}" -ge "${NODE_MAJOR}" ]]; then
     skip "Node.js $(node -v) at $(command -v node)"
-    NODE_OK=1
   else
     need "Node.js ${NODE_MAJOR}+ (found $(node -v))"
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      plan "Install Node.js ${NODE_MAJOR} into ~/.local/nvr/node (or via Homebrew on macOS)."
+    else
+      if [[ "${UNAME}" == "Darwin" ]] && nvr_has_cmd brew; then
+        brew install node@22 || brew install node
+      else
+        ARCH="$(uname -m)"
+        case "${ARCH}" in
+          x86_64) NODE_ARCH=x64 ;;
+          aarch64|arm64) NODE_ARCH=arm64 ;;
+          *) log "Unsupported architecture: ${ARCH}"; exit 1 ;;
+        esac
+        OS_NAME="linux"
+        [[ "${UNAME}" == "Darwin" ]] && OS_NAME="darwin"
+        VER="$(curl -fsSL https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/SHASUMS256.txt | awk '/node-v[0-9.]+-'"${OS_NAME}-${NODE_ARCH}"'.tar.xz/{print; exit}' | sed -n 's/.*node-v\([0-9.]*\)-.*/\1/p')"
+        [[ -n "${VER}" ]] || { log "Could not resolve a Node.js ${NODE_MAJOR} version."; exit 1; }
+        DEST="${HOME}/.local/nvr/node"
+        mkdir -p "${HOME}/.local/nvr"
+        TMP="$(mktemp -d)"
+        curl -fL "https://nodejs.org/dist/v${VER}/node-v${VER}-${OS_NAME}-${NODE_ARCH}.tar.xz" -o "${TMP}/node.tar.xz"
+        tar -xJf "${TMP}/node.tar.xz" -C "${TMP}"
+        rm -rf "${DEST}"
+        mv "${TMP}/node-v${VER}-${OS_NAME}-${NODE_ARCH}" "${DEST}"
+        mkdir -p "${HOME}/.local/bin"
+        ln -sfn "${DEST}/bin/node" "${HOME}/.local/bin/node"
+        ln -sfn "${DEST}/bin/npm" "${HOME}/.local/bin/npm"
+        ln -sfn "${DEST}/bin/npx" "${HOME}/.local/bin/npx"
+        export PATH="${DEST}/bin:${PATH}"
+        rm -rf "${TMP}"
+        log "  installed Node.js $(node -v) into ${DEST}"
+      fi
+    fi
+    CHANGES=1
   fi
 else
   need "Node.js ${NODE_MAJOR}+ is not on PATH"
-fi
-if [[ "${NODE_OK}" -eq 0 ]]; then
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     plan "Install Node.js ${NODE_MAJOR} into ~/.local/nvr/node (or via Homebrew on macOS)."
   else
-    nvr_install_node
+    if [[ "${UNAME}" == "Darwin" ]] && nvr_has_cmd brew; then
+      brew install node@22 || brew install node
+    else
+      ARCH="$(uname -m)"
+      case "${ARCH}" in
+        x86_64) NODE_ARCH=x64 ;;
+        aarch64|arm64) NODE_ARCH=arm64 ;;
+        *) log "Unsupported architecture: ${ARCH}"; exit 1 ;;
+      esac
+      OS_NAME="linux"
+      [[ "${UNAME}" == "Darwin" ]] && OS_NAME="darwin"
+      VER="$(curl -fsSL https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/SHASUMS256.txt | awk '/node-v[0-9.]+-'"${OS_NAME}-${NODE_ARCH}"'.tar.xz/{print; exit}' | sed -n 's/.*node-v\([0-9.]*\)-.*/\1/p')"
+      [[ -n "${VER}" ]] || { log "Could not resolve a Node.js ${NODE_MAJOR} version."; exit 1; }
+      DEST="${HOME}/.local/nvr/node"
+      mkdir -p "${HOME}/.local/nvr"
+      TMP="$(mktemp -d)"
+      curl -fL "https://nodejs.org/dist/v${VER}/node-v${VER}-${OS_NAME}-${NODE_ARCH}.tar.xz" -o "${TMP}/node.tar.xz"
+      tar -xJf "${TMP}/node.tar.xz" -C "${TMP}"
+      rm -rf "${DEST}"
+      mv "${TMP}/node-v${VER}-${OS_NAME}-${NODE_ARCH}" "${DEST}"
+      mkdir -p "${HOME}/.local/bin"
+      ln -sfn "${DEST}/bin/node" "${HOME}/.local/bin/node"
+      ln -sfn "${DEST}/bin/npm" "${HOME}/.local/bin/npm"
+      ln -sfn "${DEST}/bin/npx" "${HOME}/.local/bin/npx"
+      export PATH="${DEST}/bin:${PATH}"
+      rm -rf "${TMP}"
+      log "  installed Node.js $(node -v) into ${DEST}"
+    fi
   fi
   CHANGES=1
 fi

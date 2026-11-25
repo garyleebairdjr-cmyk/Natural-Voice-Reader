@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Globe, Loader2, Settings } from "lucide-react";
 import { VoicePackBrowseDialog } from "@/components/voice-pack-browse";
-import { installVoicePack, isDesktopApp, listVoicePacks, removeVoicePack } from "@/lib/platform";
+import { installVoicePack, listVoicePacks, removeVoicePack } from "@/lib/voice-packs.functions";
 import { formatPackSize, type VoicePackStatus } from "@/lib/voice-packs";
 
 type Props = {
@@ -10,7 +10,6 @@ type Props = {
 };
 
 export function VoicePackSettings({ packs, onChange }: Props) {
-  const desktop = isDesktopApp();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [browseOpen, setBrowseOpen] = useState(false);
@@ -57,22 +56,16 @@ export function VoicePackSettings({ packs, onChange }: Props) {
       </div>
       <div className="flex items-start justify-between gap-3">
         <h3 className="text-sm font-semibold text-fg">Voice packs</h3>
-        {desktop ? null : <button
+        <button
           type="button"
           onClick={() => setBrowseOpen(true)}
           className="inline-flex min-h-11 items-center gap-2 rounded-full border border-amber bg-amber px-3 text-xs font-semibold text-ink"
         >
           <Globe className="size-4" />
           Browse
-        </button>}
+        </button>
       </div>
-      {desktop ? (
-        <p className="text-xs leading-relaxed text-muted">
-          Download voices onto this device. KittenTTS gives the standard voices; Kokoro adds Butler and
-          the Indian English voices. Packs installed with <code className="text-fg">nvr voices install</code> on
-          this computer are shared with the app.
-        </p>
-      ) : <p className="text-xs leading-relaxed text-muted">
+      <p className="text-xs leading-relaxed text-muted">
         Install optional voices onto this computer. Only packs from the catalog, the community
         index, or your
         {" "}
@@ -83,7 +76,7 @@ export function VoicePackSettings({ packs, onChange }: Props) {
         or
         {" "}
         <code className="text-fg">nvr voices browse</code>.
-      </p>}
+      </p>
       <ul className="flex flex-col gap-2">
         {packs.map((pack) => {
           const busy = busyId === pack.id || pack.installing;
@@ -112,11 +105,6 @@ export function VoicePackSettings({ packs, onChange }: Props) {
                     <span className="text-muted">{pack.installed ? "Installed" : "Not installed"}</span>
                   </div>
                   {pack.licenseNote ? <p className="mt-2 text-xs leading-relaxed text-muted">{pack.licenseNote}</p> : null}
-                  {pack.progress?.state === "error" && !pack.installing ? (
-                    <p className="mt-2 text-xs text-fg" role="alert">
-                      {pack.progress.message}
-                    </p>
-                  ) : null}
                   {pack.progress && pack.installing ? (
                     <p className="mt-2 text-xs text-fg" role="status">
                       {pack.progress.message}
