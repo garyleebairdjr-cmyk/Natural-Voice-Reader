@@ -20,24 +20,6 @@ if /I "%~1"=="voices" (
   )
   exit /b %ERRORLEVEL%
 )
-if /I "%~1"=="say" (
-  set "NVR_ROOT=%~dp0.."
-  if not defined VOICESTUDIO_ROOT set "VOICESTUDIO_ROOT=%LOCALAPPDATA%\nvr\VoiceStudio"
-  if not defined NVR_DATA_HOME set "NVR_DATA_HOME=%LOCALAPPDATA%\nvr"
-  if not defined NVR_SHERPA_CACHE set "NVR_SHERPA_CACHE=%NVR_DATA_HOME%\sherpa"
-  if not defined NVR_HF_HOME set "NVR_HF_HOME=%NVR_DATA_HOME%\huggingface"
-  set "HF_HOME=%NVR_HF_HOME%"
-  set "HUGGINGFACE_HUB_CACHE=%HF_HOME%\hub"
-  if not defined VOICESTUDIO_URL set "VOICESTUDIO_URL=http://127.0.0.1:3900"
-  if not defined KOKORO_URL set "KOKORO_URL=http://127.0.0.1:3901"
-  set "VS_PY=%VOICESTUDIO_ROOT%\.venv\Scripts\python.exe"
-  if exist "%VS_PY%" (
-    "%VS_PY%" "%~dp0nvr-say.py" %2 %3 %4 %5 %6 %7 %8 %9
-  ) else (
-    python "%~dp0nvr-say.py" %2 %3 %4 %5 %6 %7 %8 %9
-  )
-  exit /b %ERRORLEVEL%
-)
 set "SCRIPT_DIR=%~dp0"
 set "NVR_ROOT=%SCRIPT_DIR%.."
 if not defined VOICESTUDIO_ROOT set "VOICESTUDIO_ROOT=%LOCALAPPDATA%\nvr\VoiceStudio"

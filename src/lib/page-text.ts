@@ -58,33 +58,3 @@ export function extractPageText(html: string): PageText {
   const main = document.querySelector("article") ?? document.querySelector("main") ?? document.body;
   return { title: pageTitle, text: tidy(blockText(main?.innerHTML ?? "")) };
 }
-
-export const MAX_READ_TEXT = 50_000;
-
-export type ReadPageResult =
-  | { ok: true; text: string; trimmed: boolean }
-  | { ok: false; error: string };
-
-/**
- * Turn a fetched response body into a queue-ready result. Shared by the web
- * server function and the desktop app, which fetches the page in Rust.
- */
-export function readableFromBody(body: string, contentType: string): ReadPageResult {
-  const type = contentType.toLowerCase();
-  let text = body.trim();
-  if (/html|xml/.test(type) || /<html|<body|<p[\s>]/i.test(body)) {
-    const page = extractPageText(body);
-    // Lead with the headline unless the article already opens with it.
-    const opensWithTitle = page.title && page.text.slice(0, page.title.length + 20).includes(page.title);
-    const heading = /[.!?:]$/.test(page.title) ? page.title : `${page.title}.`;
-    text = page.title && !opensWithTitle ? `${heading}\n\n${page.text}` : page.text;
-  }
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  if (collapsed.length < 40) {
-    return {
-      ok: false,
-      error: "That page didn't include readable text. It may only load in a browser. Paste it on a card instead.",
-    };
-  }
-  return { ok: true, text: collapsed.slice(0, MAX_READ_TEXT), trimmed: collapsed.length > MAX_READ_TEXT };
-}

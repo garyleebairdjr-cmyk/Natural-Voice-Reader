@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Cloud, CloudOff, FolderOpen, LogIn, LogOut } from "lucide-react";
-import { getGooglePublicConfig, isDesktopApp, type GooglePublicConfig } from "@/lib/platform";
+import { getGooglePublicConfig, type GooglePublicConfig } from "@/lib/google/config.functions";
 import {
   clearGoogleSession,
   fetchProfile,
@@ -304,10 +304,6 @@ export function useGoogleSession(): {
       <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Google account</h2>
       {!config ? (
         <p className="text-xs leading-relaxed text-muted">Checking Google sign-in…</p>
-      ) : !configured && isDesktopApp() ? (
-        <p className="text-xs leading-relaxed text-muted">
-          Google sign-in is not in the app yet. Your settings and queue are saved on this device.
-        </p>
       ) : !configured ? (
         <p className="text-xs leading-relaxed text-muted">
           Sign-in is optional and is not configured on this computer. Add <code className="font-mono">GOOGLE_CLIENT_ID</code> and{" "}

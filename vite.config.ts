@@ -145,17 +145,7 @@ function authPopupPlugin(): Plugin {
 // `0.0.0.0:8080` is the live-preview contract — don't change host/port.
 // The dev server starts once `src/router.tsx` and `src/routes/` exist — see
 // AGENTS.md § "First scaffold".
-//
-// `--mode desktop` builds the static, client-only bundle that the Tauri shell
-// (src-tauri/) loads. Server functions are not available there; the UI talks
-// to Rust commands through `src/lib/platform/`. No Vercel/Nitro output, no
-// dev-only auth popup or PWA middleware.
-export default defineConfig(({ command, isPreview, mode }) => {
-  // The SPA prerender step re-reads this config as a preview server without
-  // `--mode`, so remember the desktop target in the environment.
-  if (mode === "desktop") process.env.NVR_TARGET = "desktop";
-  const desktop = process.env.NVR_TARGET === "desktop";
-  return {
+export default defineConfig(({ command, isPreview }) => ({
   server: {
     host: "0.0.0.0",
     port: 8080,
@@ -167,13 +157,7 @@ export default defineConfig(({ command, isPreview, mode }) => {
     strictPort: true,
   },
   resolve: { tsconfigPaths: true },
-  plugins: desktop
-    ? [
-        tailwindcss(),
-        tanstackStart({ spa: { enabled: true, prerender: { outputPath: "/index.html" } } }),
-        viteReact(),
-      ]
-    : [
+  plugins: [
     pgliteBootstrapPlugin(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     authPopupPlugin(),
@@ -196,5 +180,4 @@ export default defineConfig(({ command, isPreview, mode }) => {
       : []),
     viteReact(),
   ],
-  };
-});
+}));

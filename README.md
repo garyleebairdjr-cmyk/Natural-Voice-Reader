@@ -64,37 +64,8 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 VoiceStudio is AGPL-3.0 and is fetched as a separate, pinned repository. It
 is not vendored into this project. See `THIRD_PARTY.md` for model licenses
-and AGPL notes.
-
-## Installed app (in progress)
-
-A packaged app for macOS, Windows, Linux, and Android is being built with
-[Tauri 2](https://tauri.app) in `src-tauri/`. It uses the same reader UI as
-the web build and speaks on the device with
-[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): KittenTTS for the
-standard voices and Kokoro for Butler, Mira, and Arjun. It needs no Python,
-VoiceStudio, or espeak-ng. Numbers, times, and money are read as words, and
-names that are not in the dictionary are pronounced by a small built-in
-neural model instead of being spelled out.
-
-On first launch the app downloads the KittenTTS voices (about 67 MB). Kokoro
-is one click in **Settings > Voice packs**. Packs are shared with
-`nvr voices install`. OmniVoice (**Best quality**) stays with the script
-install above, and Google sign-in is not in the app yet.
-
-To build it from source, run the setup script. It checks for Rust, Node.js,
-a C compiler, and the system libraries, and offers to install anything that
-is missing (asking before it uses `sudo`):
-
-```sh
-./scripts/setup-app-build.sh   # Windows: scripts\setup-app-build.ps1 (untested)
-npm run app:dev                # run the app window against a live dev server
-npm run app:build              # build installers into src-tauri/target/release/bundle/
-```
-
-Linux is built and tested; macOS, Windows, and Android builds come next. See
-[docs/desktop-app.md](docs/desktop-app.md) for how it works, the phase plan,
-and how downloads and app store listings work.
+and AGPL notes. A packaged desktop app (Tauri, later) is a future option;
+the installer today is the script bootstrap.
 
 ## Run locally
 
@@ -127,76 +98,6 @@ Open `http://localhost:8080`. The app's checked-in workspace config keeps
 authentication disabled for local development. Never expose secrets through a
 `VITE_`-prefixed variable. `scripts/with-app-env.mjs` only loads `VITE_` flags
 from `.grok/app-env.json`; it does not load API keys.
-
-## Command-line speech
-
-`nvr say` (also installed as `nvr-say`) turns text into an MP3 using the same
-local VoiceStudio and Kokoro voices as the reader. It starts only the engine
-the chosen voice needs, writes the file, and stops anything it started. It
-does not open the browser, and it does not stop engines that were already
-running. The default voice is Leo on KittenTTS.
-
-```sh
-nvr say --text "Hello, Gary." --out ~/Music/hello.mp3
-nvr say --voice butler --text "Good evening." --out ~/Music/butler.mp3
-nvr-say --list-voices
-```
-
-You can also pass the text as arguments, or pipe it on stdin:
-
-```sh
-nvr say --out ~/Music/hello.mp3 Hello, Gary.
-echo "Dinner is ready." | nvr say --out /tmp/nvr-say.mp3
-```
-
-`--out -` writes raw MP3 bytes to stdout. Use `--keep` if you are making
-several clips and want VoiceStudio or Kokoro to stay up. Use `--model omnivoice`
-for the slower high-quality engine on the standard voices. Butler, Mira, and
-Arjun always use Kokoro, so the accent is not replaced.
-
-### Play the clip on a speaker or clock
-
-`clockctl` can play the file on a Cast device such as a Lenovo Smart Clock.
-The usual pattern is to write the MP3, then play it:
-
-```sh
-nvr say --text "Good morning, Gary." --out ~/Music/wake.mp3 && clockctl play ~/Music/wake.mp3
-echo "Dinner is ready." | nvr say --out /tmp/nvr-say.mp3 && clockctl play /tmp/nvr-say.mp3
-```
-
-`clockctl play` needs a file path or an http(s) URL, so pipe the audio bytes
-into it only if you first write a file as shown above.
-
-### Wake-ups and conversations from a bot
-
-A bot on a laptop or phone can use this the same way a person would: produce
-text, ask `nvr say` to speak it, then cast the file.
-
-For a wake-up, a scheduled cron job or a routine can write a short morning
-line and play it on the clock at a set time:
-
-```sh
-nvr say --text "Good morning. It is 6:30, and the coffee is the next thing." \
-  --out ~/Music/wake.mp3 && clockctl play ~/Music/wake.mp3
-```
-
-Keep those clips short, and set the clock volume ahead of time so the morning
-message is not a surprise blast.
-
-For a spoken conversation, the loop is speech-to-text, an LLM reply, this CLI,
-then play or cast:
-
-- Capture a short utterance from a microphone and transcribe it with a local
-  or device speech-to-text tool.
-- Send that text to a language model and take the reply.
-- Run `nvr say --text "$REPLY" --out /tmp/nvr-reply.mp3`.
-- Play the reply with `clockctl play /tmp/nvr-reply.mp3`, or on the local
-  speaker if you are not using a Cast device.
-- Wait until playback finishes, then listen for the next utterance.
-
-The voice work stays on the local engines, so the bot does not need a cloud
-TTS key. You will still need your own speech-to-text and language-model setup
-for the other two steps. This CLI only does the "speak this text" part.
 
 ## Local voices (VoiceStudio)
 
@@ -385,7 +286,6 @@ npm run typecheck
 npm test
 npm run lint
 npm run build
-nvr say --text "Hello." --out /tmp/nvr-hello.mp3
 ```
 
 ## Notes

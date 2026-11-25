@@ -16,16 +16,9 @@
     "preview:stop": "node scripts/preview.mjs stop",
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
-    "test": "python3 -m unittest scripts/nvr_paths_test.py scripts/nvr-say_test.py && node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/sentences.test.ts src/lib/audio-join.test.ts src/lib/page-text.test.ts src/lib/speech-pipeline.test.ts src/lib/tts-config.test.ts src/lib/voice-routing.test.ts src/lib/voices.test.ts src/lib/lane-store.test.ts src/lib/appearance.test.ts src/lib/nvr-paths.test.ts src/lib/google/settings.test.ts src/lib/google/folders.test.ts src/lib/google/opt-in.test.ts src/lib/voice-packs.test.ts src/lib/voice-packs-community.test.ts src/lib/voice-picker.test.ts",
+    "test": "python3 -m unittest scripts/nvr_paths_test.py && node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/sentences.test.ts src/lib/audio-join.test.ts src/lib/page-text.test.ts src/lib/speech-pipeline.test.ts src/lib/tts-config.test.ts src/lib/voice-routing.test.ts src/lib/voices.test.ts src/lib/lane-store.test.ts src/lib/appearance.test.ts src/lib/nvr-paths.test.ts src/lib/google/settings.test.ts src/lib/google/folders.test.ts src/lib/google/opt-in.test.ts src/lib/voice-packs.test.ts src/lib/voice-packs-community.test.ts src/lib/voice-picker.test.ts",
     "lint": "eslint .",
-    "format": "prettier --write .",
-    "dev:desktop": "node scripts/with-app-env.mjs vite dev --mode desktop --host 127.0.0.1 --port 1420 --strictPort",
-    "build:desktop": "node scripts/with-app-env.mjs vite build --mode desktop",
-    "tauri": "tauri",
-    "app:dev": "tauri dev",
-    "app:build": "tauri build",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "app:setup": "bash scripts/setup-app-build.sh"
+    "format": "prettier --write ."
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
@@ -58,7 +51,6 @@
     "@tanstack/react-start": "~1.168.60",
     "@tanstack/react-table": "^8.21.0",
     "@tanstack/router-plugin": "^1.168.0",
-    "@tauri-apps/api": "^2.12.5",
     "better-auth": "~1.6.30",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -85,7 +77,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.20.0",
-    "@tauri-apps/cli": "^2.12.6",
     "@types/node": "^22.16.5",
     "@types/pg": "^8.11.10",
     "@types/react": "^19.2.0",

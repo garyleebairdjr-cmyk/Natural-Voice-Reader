@@ -55,7 +55,7 @@ export type SpeechOk = {
   ok: true;
   audio: string;
   mime: string;
-  provider: "voicestudio" | "kokoro" | "xai" | "native";
+  provider: "voicestudio" | "kokoro" | "xai";
   model: string;
   speedApplied: boolean;
   slow?: boolean;

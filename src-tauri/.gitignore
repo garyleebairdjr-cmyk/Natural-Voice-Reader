@@ -1,4 +1,0 @@
-# Rust build output
-/target/
-# Generated JSON schemas (re-created on build)
-/gen/schemas

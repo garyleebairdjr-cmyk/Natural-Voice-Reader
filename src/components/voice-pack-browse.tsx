@@ -6,7 +6,7 @@ import {
   installCommunityPack,
   removeCatalogIndex,
   type CommunityBrowseResult,
-} from "@/lib/platform";
+} from "@/lib/voice-packs.functions";
 import { formatPackSize, type CommunityBrowsePack, type VoicePackStatus } from "@/lib/voice-packs";
 
 type Props = {
