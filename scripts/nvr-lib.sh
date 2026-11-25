@@ -146,3 +146,38 @@ nvr_has_cmd() {
 nvr_node_major() {
   node -p "process.versions.node.split('.')[0]" 2>/dev/null || true
 }
+
+# Install Node.js $NODE_MAJOR: Homebrew on macOS when available, otherwise the
+# official tarball into ~/.local/nvr/node with links in ~/.local/bin.
+nvr_install_node() {
+  local major="${NODE_MAJOR:-22}"
+  local uname arch node_arch os_name ver dest tmp
+  uname="$(uname -s)"
+  if [[ "${uname}" == "Darwin" ]] && nvr_has_cmd brew; then
+    brew install "node@${major}" || brew install node
+    return
+  fi
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64) node_arch=x64 ;;
+    aarch64|arm64) node_arch=arm64 ;;
+    *) echo "Unsupported architecture: ${arch}" >&2; return 1 ;;
+  esac
+  os_name="linux"
+  [[ "${uname}" == "Darwin" ]] && os_name="darwin"
+  ver="$(curl -fsSL "https://nodejs.org/dist/latest-v${major}.x/SHASUMS256.txt" | awk '/node-v[0-9.]+-'"${os_name}-${node_arch}"'.tar.xz/{print; exit}' | sed -n 's/.*node-v\([0-9.]*\)-.*/\1/p')"
+  [[ -n "${ver}" ]] || { echo "Could not resolve a Node.js ${major} version." >&2; return 1; }
+  dest="${HOME}/.local/nvr/node"
+  mkdir -p "${HOME}/.local/nvr" "${HOME}/.local/bin"
+  tmp="$(mktemp -d)"
+  curl -fL "https://nodejs.org/dist/v${ver}/node-v${ver}-${os_name}-${node_arch}.tar.xz" -o "${tmp}/node.tar.xz"
+  tar -xJf "${tmp}/node.tar.xz" -C "${tmp}"
+  rm -rf "${dest}"
+  mv "${tmp}/node-v${ver}-${os_name}-${node_arch}" "${dest}"
+  ln -sfn "${dest}/bin/node" "${HOME}/.local/bin/node"
+  ln -sfn "${dest}/bin/npm" "${HOME}/.local/bin/npm"
+  ln -sfn "${dest}/bin/npx" "${HOME}/.local/bin/npx"
+  export PATH="${dest}/bin:${PATH}"
+  rm -rf "${tmp}"
+  echo "  installed Node.js $(node -v) into ${dest}"
+}

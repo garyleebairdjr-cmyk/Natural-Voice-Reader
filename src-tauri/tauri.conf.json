@@ -1,0 +1,76 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Natural Voice Reader",
+  "version": "0.2.0",
+  "identifier": "io.github.garyleebairdjr.naturalvoicereader",
+  "build": {
+    "beforeDevCommand": "npm run dev:desktop",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build:desktop",
+    "frontendDist": "../dist/client"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Natural Voice Reader",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 380,
+        "minHeight": 560
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src": "'self' https://fonts.gstatic.com",
+        "img-src": "'self' data: blob:",
+        "media-src": "'self' data: blob:",
+        "connect-src": "ipc: http://ipc.localhost"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Turn text and web pages into a listenable reading queue.",
+    "longDescription": "Natural Voice Reader turns pasted text and public web pages into a listenable reading queue. Choose a voice and speed, move between reading cards, and download the audio.",
+    "license": "MIT",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "gstreamer1-plugins-base",
+          "gstreamer1-plugins-good"
+        ]
+      }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY.md": "THIRD_PARTY.md"
+    }
+  }
+}

@@ -96,7 +96,8 @@ export function voiceStudioVoice(model: string, voiceId: string): string {
   return "default";
 }
 
-export type TtsProvider = "voicestudio" | "kokoro" | "xai" | "none";
+/** `native` is the installed app's on-device engine (sherpa-onnx in Rust). */
+export type TtsProvider = "voicestudio" | "kokoro" | "xai" | "native" | "none";
 
 export type TtsEngineState = "ready" | "loading" | "downloading" | "unavailable";
 
