@@ -1,8 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import { extractPageText } from "@/lib/page-text";
+import { readableFromBody } from "@/lib/page-text";
 
 const MAX_BYTES = 1_500_000;
-const MAX_TEXT = 50_000;
 const MAX_HOPS = 4;
 
 function isPrivateV4(ip: string): boolean {
@@ -140,24 +139,7 @@ export const readPage = createServerFn({ method: "POST" })
         if (type && !/text\/|xml|json|html/.test(type)) {
           return { ok: false as const, error: "That link isn't a text page." };
         }
-        const body = await readBody(res);
-        let text = body.trim();
-        if (/html|xml/.test(type) || /<html|<body|<p[\s>]/i.test(body)) {
-          const page = extractPageText(body);
-          // Lead with the headline unless the article already opens with it.
-          const opensWithTitle = page.title && page.text.slice(0, page.title.length + 20).includes(page.title);
-          const heading = /[.!?:]$/.test(page.title) ? page.title : `${page.title}.`;
-          text = page.title && !opensWithTitle ? `${heading}\n\n${page.text}` : page.text;
-        }
-        const collapsed = text.replace(/\s+/g, " ").trim();
-        if (collapsed.length < 40) {
-          return {
-            ok: false as const,
-            error: "That page didn't include readable text. It may only load in a browser. Paste it on a card instead.",
-          };
-        }
-        const trimmed = collapsed.length > MAX_TEXT;
-        return { ok: true as const, text: collapsed.slice(0, MAX_TEXT), trimmed };
+        return readableFromBody(await readBody(res), type);
       }
       return { ok: false as const, error: "That page redirected too many times." };
     } catch (err) {
