@@ -22,7 +22,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
-import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/platform";
+import { getTtsStatus, isDesktopApp, prepareTtsEngine, synthesizeSpeech } from "@/lib/platform";
 import { readPage } from "@/lib/platform";
 import { defaultInk, inksFor, inkFits, migrateInk, resolveTheme, type ThemeName } from "@/lib/appearance";
 import {
@@ -59,7 +59,7 @@ const PLAY_MODE_OPTIONS: { value: PlayMode; label: string; hint: string; icon: t
 ];
 
 type CachedClip = { url: string; speedApplied: boolean };
-type PreparedClip = { key: string; url: string; speedApplied: boolean; provider: "cache" | "voicestudio" | "kokoro" | "xai" };
+type PreparedClip = { key: string; url: string; speedApplied: boolean; provider: "cache" | "voicestudio" | "kokoro" | "xai" | "native" };
 const audioCache = new Map<string, CachedClip>();
 const cacheOrder: string[] = [];
 const inflightAudio = new Map<string, Promise<PreparedClip>>();
@@ -527,8 +527,10 @@ export function LaneApp() {
     }
     const url = b64ToUrl(result.audio, result.mime);
     remember(key, { url, speedApplied: result.speedApplied });
-    if (result.provider === "voicestudio" || result.provider === "xai" || result.provider === "kokoro") {
-      const message = result.provider === "kokoro"
+    if (result.provider === "voicestudio" || result.provider === "xai" || result.provider === "kokoro" || result.provider === "native") {
+      const message = result.provider === "native"
+        ? `Using voices on this device (${result.model === "kokoro" ? "Kokoro" : "KittenTTS"}).`
+        : result.provider === "kokoro"
         ? "Using local Kokoro for this voice."
         : result.provider === "voicestudio"
           ? `Using local VoiceStudio (${modelLabel(result.model)}).`
@@ -1447,8 +1449,9 @@ export function LaneApp() {
         </div>
 
         <p className="text-xs leading-relaxed text-muted">
-          Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian English voices, then from xAI if a key is set.
-          Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready.
+          {isDesktopApp()
+            ? "Generated voices run on this device once a voice pack is installed in Settings: KittenTTS for the standard voices, Kokoro for Butler and the Indian English voices. Without a pack, the device voice is used. The first sentence starts as soon as it is ready."
+            : "Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian English voices, then from xAI if a key is set. Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready."}
         </p>
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1630,7 +1633,7 @@ export function LaneApp() {
         {packs ? <VoicePackSettings packs={packs} onChange={setPacks} /> : null}
         <div>
           <div className="mb-3 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            {isDesktopApp() ? null : <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Engine</h2>
               <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Local voice engine">
                 {TTS_MODELS.map((model) => (
@@ -1650,7 +1653,7 @@ export function LaneApp() {
                   </button>
                 ))}
               </div>
-            </div>
+            </div>}
             <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Voices</h2>
             <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Voice mode">

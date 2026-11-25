@@ -47,3 +47,70 @@ These are installed into VoiceStudio's environment, not copied into this repo:
 - espeak-ng (phonemizer data used by KittenTTS) — GPL-3.0
 
 Keep their notices if you redistribute those binaries.
+
+## Installed app (src-tauri/)
+
+The packaged app does not use VoiceStudio, Python, or espeak-ng. These parts
+are compiled into the app or bundled with it:
+
+| Component | License | How it is used |
+| --- | --- | --- |
+| [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 2.0 (Rust crate and native library) | Apache-2.0 | Runs the KittenTTS and Kokoro models on the device. Linked statically. |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) (inside sherpa-onnx) | MIT | Model inference. Linked statically. |
+| [piper-plus-g2p](https://github.com/ayutaz/piper-plus) 0.5 | MIT | English text normalization and CMUdict-based pronunciation, without espeak-ng. |
+| [CMUdict](https://github.com/cmusphinx/cmudict) (`src-tauri/resources/cmudict.json`, from piper-plus-g2p) | BSD-2-Clause, Copyright (C) 1993-2015 Carnegie Mellon University | Pronunciation dictionary, built into the app. |
+| [g2p_en](https://github.com/Kyubyong/g2p) 2.1.0 weights (`src-tauri/resources/g2p_en.bin`, from `checkpoint20.npz`) | Apache-2.0, Copyright Kyubyong Park | Neural pronunciation guesser for words that are not in CMUdict. The model is re-implemented in Rust (`src-tauri/src/speech/neural.rs`); the weights are unchanged, stored as raw float32. |
+| [Tauri](https://tauri.app) 2 and its dependencies | MIT / Apache-2.0 | App shell. |
+
+Voice models are downloaded by the app, not bundled, from the sherpa-onnx
+`tts-models` release:
+
+| Pack | Archive | License |
+| --- | --- | --- |
+| KittenTTS (default) | `kitten-mini-en-v0_8.tar.bz2`, converted by sherpa-onnx from KittenML/kitten-tts-mini-0.8 | Apache-2.0 |
+| Kokoro | `kokoro-int8-multi-lang-v1_0.tar.bz2` | Apache-2.0 |
+
+OmniVoice is not offered in the app; it needs PyTorch and stays with the
+script install.
+
+### CMUdict license
+
+```text
+Copyright (C) 1993-2015 Carnegie Mellon University. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+   The contents of this file are deemed to be source code.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in
+   the documentation and/or other materials provided with the
+   distribution.
+
+This work was supported in part by funding from the Defense Advanced
+Research Projects Agency, the Office of Naval Research and the National
+Science Foundation of the United States of America, and by member
+companies of the Carnegie Mellon Sphinx Speech Consortium. We acknowledge
+the contributions of many volunteers to the expansion and improvement of
+this dictionary.
+
+THIS SOFTWARE IS PROVIDED BY CARNEGIE MELLON UNIVERSITY ``AS IS'' AND
+ANY EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL CARNEGIE MELLON UNIVERSITY
+NOR ITS EMPLOYEES BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+The Apache-2.0 components above are used under the Apache License 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). This file and `LICENSE` are
+installed with the app.

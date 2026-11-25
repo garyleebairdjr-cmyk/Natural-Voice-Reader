@@ -57,7 +57,7 @@ export function prepareTtsEngine(call: Call<{ model: string }>): Promise<TtsStat
 export function synthesizeSpeech(
   call: Call<{ text: string; voiceId: string; speed: number; model: string }>,
 ): Promise<SpeechResult> {
-  return isDesktopApp() ? desktop.synthesizeSpeech() : webSynthesize(call);
+  return isDesktopApp() ? desktop.synthesizeSpeech(call.data) : webSynthesize(call);
 }
 
 export function getGooglePublicConfig(): Promise<GooglePublicConfig> {
@@ -69,23 +69,23 @@ export function listVoicePacks(): Promise<VoicePackListResult> {
 }
 
 export function installVoicePack(call: Call<{ id: string }>): Promise<VoicePackListResult> {
-  return isDesktopApp() ? desktop.notYet() : webInstall(call);
+  return isDesktopApp() ? desktop.installVoicePack(call.data.id) : webInstall(call);
 }
 
 export function removeVoicePack(call: Call<{ id: string }>): Promise<VoicePackListResult> {
-  return isDesktopApp() ? desktop.notYet() : webRemove(call);
+  return isDesktopApp() ? desktop.removeVoicePack(call.data.id) : webRemove(call);
 }
 
 export function listCatalogIndexes(): Promise<{ urls: string[] }> {
-  return isDesktopApp() ? desktop.notYet() : webListIndexes();
+  return isDesktopApp() ? desktop.notInApp() : webListIndexes();
 }
 
 export function addCatalogIndex(call: Call<{ url: string }>): Promise<{ urls: string[] }> {
-  return isDesktopApp() ? desktop.notYet() : webAddIndex(call);
+  return isDesktopApp() ? desktop.notInApp() : webAddIndex(call);
 }
 
 export function removeCatalogIndex(call: Call<{ url: string }>): Promise<{ urls: string[] }> {
-  return isDesktopApp() ? desktop.notYet() : webRemoveIndex(call);
+  return isDesktopApp() ? desktop.notInApp() : webRemoveIndex(call);
 }
 
 type BrowseFilter = {
@@ -97,9 +97,9 @@ type BrowseFilter = {
 };
 
 export function browseVoicePacks(call: Call<BrowseFilter>): Promise<CommunityBrowseResult> {
-  return isDesktopApp() ? desktop.notYet() : webBrowse(call);
+  return isDesktopApp() ? desktop.notInApp() : webBrowse(call);
 }
 
 export function installCommunityPack(call: Call<{ id: string }>): Promise<VoicePackListResult> {
-  return isDesktopApp() ? desktop.notYet() : webInstallCommunity(call);
+  return isDesktopApp() ? desktop.notInApp() : webInstallCommunity(call);
 }
