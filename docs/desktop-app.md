@@ -15,33 +15,49 @@ how to build it, what is done, and how it gets to users.
   functions as before. Inside the app (`window.__TAURI_INTERNALS__` is present)
   they go to Rust commands in `src-tauri/src/` through
   `src/lib/platform/desktop.ts`.
-- **Speech (planned).** Native [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
-  in Rust runs Kokoro, KittenTTS, and Piper on all four platforms with no
-  Python. OmniVoice needs PyTorch and stays with the script install
-  (`scripts/install.sh`).
+- **Speech.** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) runs in
+  Rust (`src-tauri/src/speech/`): KittenTTS for the standard voices and Kokoro
+  for Butler, Mira, and Arjun. No Python and no espeak-ng (GPL), so the app
+  stays MIT. Text is turned into phonemes in Rust:
+  1. **Cleanup** (`normalize.rs`): times, money, percentages, ordinals, years,
+     and other numbers become words ("6:30 a.m." becomes "six thirty A M").
+  2. **Dictionary** (piper-plus-g2p with CMUdict) gives espeak-style IPA, with
+     stress and common suffixes handled.
+  3. **Neural guesser** (`neural.rs`, a Rust port of g2p_en's small GRU model)
+     reads words that are not in the dictionary, such as names, instead of
+     spelling them letter by letter. Short all-caps words are still spelled
+     as acronyms.
+  4. **Kokoro** uses the pack's British lexicon first, so Butler keeps his
+     accent, and converts anything else to Kokoro's symbols.
+  OmniVoice needs PyTorch and stays with the script install (`scripts/install.sh`).
 
 ## Status
 
 | Phase | Scope | State |
 | --- | --- | --- |
-| 1 | Tauri shell, static bundle, platform layer, page reading in Rust, icons | Done (Linux build needs system libraries, below) |
-| 2 | sherpa-onnx speech in Rust (Kokoro, KittenTTS, Piper); confirm the KittenTTS mini 0.8 model converts | Next |
-| 3 | Voice pack download, checksum, and remove in Rust; community catalog | Planned |
-| 4 | CI builds for all platforms, signing, notarization, auto-update, GitHub Releases | Planned |
-| 5 | Android: phone layout, model storage, background audio, Play Store build | Planned |
-| — | Google sign-in for the app (needs a Desktop/Android OAuth client and a loopback/PKCE flow) | Later |
+| 1 | Tauri shell, static bundle, platform layer, page reading in Rust, icons | Done |
+| 2 | On-device speech with sherpa-onnx (KittenTTS, Kokoro), pronunciation without espeak-ng | Done on Linux |
+| 3 | Voice pack download, checksum, unpack, and remove in Rust; first-run install of KittenTTS | Done on Linux |
+| — | Build setup scripts that install missing compilers and libraries | Done (Linux tested; macOS and Windows untested) |
+| 4 | CI builds for all platforms, unsigned releases, auto-update | Next |
+| 5 | Android: phone layout, model storage, background audio, APK | Planned |
+| — | Community (Piper) packs, Google sign-in in the app | Later |
 
-What works in the app today:
+What the app does today:
 
-- The full reader UI, queue, settings, themes, and downloads of device-voice
-  playback where the platform supports it.
+- The full reader UI, queue, settings, themes, and audio downloads (WAV).
+- **Generated voices on the device.** On first launch the app downloads the
+  KittenTTS pack (about 67 MB) in the background, like the script installer
+  does. Kokoro (Butler, Mira, Arjun, about 130 MB) is one click in
+  **Settings > Voice packs**. A pack removed there is not downloaded again.
+- Packs are stored in the same folder as `nvr voices install`, so a pack
+  installed either way works for both.
 - **Link** reading: Rust fetches the page (http/https only, no private or
-  local addresses, DNS results pinned for the request, 4 redirects, 1.5 MB cap,
-  12 s timeout). The webview turns it into reading text with the same
+  local addresses, DNS results pinned for the request, 4 redirects, 1.5 MB
+  cap, 12 s timeout). The webview turns it into reading text with the same
   `readableFromBody` helper as the server.
-- Voice packs are listed from the bundled catalog. Install, remove, and
-  community browse report that they are not in this version yet.
-- Every voice uses the device voice. Google sign-in is hidden.
+- Hidden in the app for now: OmniVoice and the engine switch, community pack
+  browsing, and Google sign-in.
 
 Known issue: the prerendered SPA shell logs one React hydration warning
 (#418) on start. React recovers by rendering on the client, which is what the
@@ -50,24 +66,39 @@ and should be revisited when Start is upgraded.
 
 ## Build it
 
-Requirements: Node 22+, Rust (stable, via rustup), and the Tauri system
-libraries for your OS ([Tauri prerequisites](https://tauri.app/start/prerequisites/)).
+One command checks for every build tool and offers to install what is
+missing. It asks before each install, and before using `sudo`.
 
-Ubuntu / Debian:
+Linux and macOS:
 
 ```sh
-sudo apt install libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-  libayatana-appindicator3-dev librsvg2-dev build-essential curl wget file libxdo-dev libssl-dev
+./scripts/setup-app-build.sh            # or: npm run app:setup
+./scripts/setup-app-build.sh --dry-run  # show what is missing, change nothing
+./scripts/setup-app-build.sh --yes --build  # install without asking, then build
 ```
 
-macOS: Xcode Command Line Tools (`xcode-select --install`).
-Windows: Microsoft C++ Build Tools and WebView2 (preinstalled on Windows 11).
+Windows (PowerShell, **untested**):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-app-build.ps1 [-DryRun] [-Yes] [-Build]
+```
+
+What it installs when missing:
+
+| Need | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| C compiler and SDK | build-essential (apt), gcc (dnf/zypper), base-devel (pacman) | Xcode Command Line Tools | Visual Studio 2022 C++ Build Tools |
+| Web view | WebKitGTK 4.1 dev files, librsvg, OpenSSL, GStreamer plugins | built in | WebView2 runtime |
+| Rust 1.90+ | rustup (into `~/.cargo`, no sudo) | rustup | rustup (winget) |
+| Node.js 22+ | official build in `~/.local/nvr/node` | Homebrew | winget |
+| npm packages | `npm ci` | `npm ci` | `npm ci` |
+
+Then:
 
 ```sh
-npm ci
 npm run app:dev      # app window with hot reload (dev server on 127.0.0.1:1420)
 npm run app:build    # installers in src-tauri/target/release/bundle/
-npm run test:rust    # Rust unit tests (address and URL checks)
+npm run test:rust    # Rust unit tests
 ```
 
 `app:build` makes the formats for the OS it runs on: `.deb`, `.rpm`, and
@@ -75,9 +106,23 @@ npm run test:rust    # Rust unit tests (address and URL checks)
 Windows. Each OS has to build its own installers, which is why releases come
 from CI (phase 4).
 
+Optional Rust tests that use real models or the network:
+
+```sh
+NVR_TEST_SHERPA_ROOT=~/.local/share/nvr/sherpa npm run test:rust   # speak with installed packs
+NVR_TEST_PACK_ROOT=/tmp/nvr-pack-test npm run test:rust            # download, verify, remove KittenTTS
+```
+
+### What end users need
+
+Nothing beyond the installer. The `.deb` and `.rpm` declare WebKitGTK, GTK,
+and the GStreamer plugins, so the package manager installs them. The
+AppImage carries its own libraries. The Windows installer downloads WebView2
+if it is missing. macOS 10.15 or newer has everything built in. The speech
+engine is compiled into the app; voices download on first launch.
+
 The app id is `io.github.garyleebairdjr.naturalvoicereader` in
-`src-tauri/tauri.conf.json`. Choose the final id before the first store
-listing; stores do not let it change afterwards.
+`src-tauri/tauri.conf.json`. A store publisher would use their own id.
 
 ## Downloads on the website
 
@@ -97,6 +142,10 @@ allows them in System Settings, and Windows SmartScreen shows "Windows
 protected your PC". Signing removes those warnings (next section).
 
 ## Signing and app stores
+
+This project ships unsigned downloads; it does not hold Apple, Windows
+signing, or store accounts. The table is for anyone who wants to publish a
+signed build or a store listing under their own account.
 
 | Channel | What you need | Cost | Notes |
 | --- | --- | --- | --- |

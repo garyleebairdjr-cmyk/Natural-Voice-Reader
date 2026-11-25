@@ -24,7 +24,8 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "app:setup": "bash scripts/setup-app-build.sh"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",
