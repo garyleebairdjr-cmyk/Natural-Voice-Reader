@@ -1,0 +1,29 @@
+[package]
+name = "natural-voice-reader"
+version = "0.1.0"
+description = "Natural Voice Reader desktop and Android app"
+license = "MIT"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+# The `_lib` suffix avoids a name clash with the binary on Windows.
+name = "natural_voice_reader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "gzip", "brotli", "charset", "http2"] }
+serde = { version = "1.0.229", features = ["derive"] }
+tauri = "2"
+tokio = { version = "1.53.3", features = ["net"] }
+url = "2.5.9"
+
+[build-dependencies]
+tauri-build = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Globe, Loader2, Settings } from "lucide-react";
 import { VoicePackBrowseDialog } from "@/components/voice-pack-browse";
-import { installVoicePack, listVoicePacks, removeVoicePack } from "@/lib/voice-packs.functions";
+import { installVoicePack, listVoicePacks, removeVoicePack } from "@/lib/platform";
 import { formatPackSize, type VoicePackStatus } from "@/lib/voice-packs";
 
 type Props = {

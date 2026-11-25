@@ -22,8 +22,8 @@ import {
   VolumeX,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
-import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/tts.functions";
-import { readPage } from "@/lib/read-page.functions";
+import { getTtsStatus, prepareTtsEngine, synthesizeSpeech } from "@/lib/platform";
+import { readPage } from "@/lib/platform";
 import { defaultInk, inksFor, inkFits, migrateInk, resolveTheme, type ThemeName } from "@/lib/appearance";
 import {
   cardAfterFinish,
@@ -43,7 +43,7 @@ import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/l
 import { resolveSpeechRoute } from "@/lib/voice-routing";
 import { applyPlayback } from "@/lib/soft-room";
 import { joinClips } from "@/lib/audio-join";
-import { listVoicePacks } from "@/lib/voice-packs.functions";
+import { listVoicePacks } from "@/lib/platform";
 import { voicesInInstalledPacks, type VoicePackStatus } from "@/lib/voice-packs";
 import { VoicePackSettings } from "@/components/voice-pack-settings";
 import { VoicePicker } from "@/components/voice-picker";
