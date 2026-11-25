@@ -353,6 +353,27 @@ export function LaneApp() {
     };
   }, [ttsStatus?.state]);
 
+  // Installing or removing a pack in Settings changes which voices work, so
+  // refresh the status line then. Skip the first pack list, which only
+  // reports what was already there when the app opened.
+  const packKey = packs?.map((pack) => `${pack.id}:${pack.installed ? 1 : 0}${pack.installing ? 1 : 0}`).join(",") ?? null;
+  const lastPackKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (packKey === null) return;
+    const previous = lastPackKey.current;
+    lastPackKey.current = packKey;
+    if (previous === null || previous === packKey) return;
+    let cancelled = false;
+    void getTtsStatus()
+      .then((status) => {
+        if (!cancelled) setTtsStatus(status);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [packKey]);
+
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === "visible" && phaseRef.current === "playing") {

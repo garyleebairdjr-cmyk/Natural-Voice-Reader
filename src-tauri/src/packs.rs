@@ -13,7 +13,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -151,11 +151,23 @@ impl Packs {
     }
 
     /// Download, verify, and unpack a pack. Runs to completion; callers spawn it.
-    pub async fn install(&self, root: PathBuf, pack: &'static NativePack) {
-        if let Err(message) = self.install_inner(&root, pack).await {
-            self.update(pack.id, "error", None, message);
-        } else {
-            self.set(None);
+    /// Install a pack, always ending in "installed" or a visible error. The
+    /// work runs in its own task so that a panic (for example from the TLS
+    /// layer) is reported instead of leaving the pack stuck at 0% and busy.
+    pub async fn install(self: Arc<Self>, root: PathBuf, pack: &'static NativePack) {
+        let worker = Arc::clone(&self);
+        let joined = tauri::async_runtime::spawn(async move { worker.install_inner(&root, pack).await }).await;
+        match joined {
+            Ok(Ok(())) => self.set(None),
+            Ok(Err(message)) => {
+                crate::applog::error(&format!("Installing {} failed: {message}", pack.id));
+                self.update(pack.id, "error", None, message);
+            }
+            Err(err) => {
+                let why = panic_text(err);
+                crate::applog::error(&format!("Installing {} crashed: {why}", pack.id));
+                self.update(pack.id, "error", None, format!("The download stopped unexpectedly ({why}). Try again."));
+            }
         }
     }
 
@@ -166,16 +178,24 @@ impl Packs {
 
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(20))
+            // A stalled transfer errors out instead of hanging at the same percent.
+            .read_timeout(Duration::from_secs(60))
             .build()
-            .map_err(|_| "Could not start the download.".to_string())?;
-        let mut res = client.get(pack.url).send().await.map_err(|_| "Could not reach the download server. Check your connection.".to_string())?;
+            .map_err(|e| format!("Could not start the download: {}", crate::applog::root_cause(&e)))?;
+        let mut res = client.get(pack.url).send().await.map_err(|e| {
+            crate::applog::error(&format!("Download request for {} failed: {}", pack.id, crate::applog::chain(&e)));
+            format!("Could not reach the download server ({}). Check your connection.", crate::applog::root_cause(&e))
+        })?;
         if !res.status().is_success() {
             return Err(format!("The download server returned {}.", res.status().as_u16()));
         }
         let total = res.content_length();
         let mut file = std::fs::File::create(&archive).map_err(|e| format!("Could not save the download: {e}"))?;
         let mut done: u64 = 0;
-        while let Some(chunk) = res.chunk().await.map_err(|_| "The download was interrupted. Try again.".to_string())? {
+        while let Some(chunk) = res.chunk().await.map_err(|e| {
+            crate::applog::error(&format!("Download of {} interrupted: {}", pack.id, crate::applog::chain(&e)));
+            format!("The download was interrupted ({}). Try again.", crate::applog::root_cause(&e))
+        })? {
             std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("Could not save the download: {e}"))?;
             done += chunk.len() as u64;
             let percent = total.map(|t| (done as f64 / t as f64 * 100.0).min(100.0));
@@ -247,6 +267,21 @@ impl Packs {
     }
 }
 
+/// The message of a panicked task, or the join error itself.
+fn panic_text(err: tauri::Error) -> String {
+    match err {
+        tauri::Error::JoinError(join) if join.is_panic() => {
+            let payload = join.into_panic();
+            payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "a crash in the download task".into())
+        }
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,11 +291,11 @@ mod tests {
     fn installs_and_removes_kitten() {
         let Ok(root) = std::env::var("NVR_TEST_PACK_ROOT") else { return };
         let root = PathBuf::from(root);
-        let packs = Packs::default();
+        let packs = Arc::new(Packs::default());
         let kitten = pack("kittentts").unwrap();
         packs.start(kitten.id);
         assert!(packs.list(&root).iter().any(|p| p.id == "kittentts" && p.installing));
-        tauri::async_runtime::block_on(packs.install(root.clone(), kitten));
+        tauri::async_runtime::block_on(Arc::clone(&packs).install(root.clone(), kitten));
         let state = packs.list(&root);
         let k = state.iter().find(|p| p.id == "kittentts").unwrap();
         assert!(k.installed && !k.installing, "progress: {:?}", k.progress.as_ref().map(|p| &p.message));
