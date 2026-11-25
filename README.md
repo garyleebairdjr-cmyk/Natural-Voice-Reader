@@ -64,8 +64,26 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 VoiceStudio is AGPL-3.0 and is fetched as a separate, pinned repository. It
 is not vendored into this project. See `THIRD_PARTY.md` for model licenses
-and AGPL notes. A packaged desktop app (Tauri, later) is a future option;
-the installer today is the script bootstrap.
+and AGPL notes.
+
+## Installed app (in progress)
+
+A packaged app for macOS, Windows, Linux, and Android is being built with
+[Tauri 2](https://tauri.app) in `src-tauri/`. It uses the same reader UI as
+the web build and will speak with native sherpa-onnx voices (Kokoro,
+KittenTTS, Piper), so it will not need Python or VoiceStudio. OmniVoice
+(**Best quality**) stays with the script install above.
+
+This first version opens the reader in its own window and reads web pages.
+Every voice uses the device voice for now. Voice packs, generated voices,
+and Google sign-in come in later phases. See
+[docs/desktop-app.md](docs/desktop-app.md) for build steps, the phase plan,
+and how releases and app store listings work.
+
+```sh
+npm run app:dev     # run the app window against a live dev server
+npm run app:build   # build installers for this OS into src-tauri/target/release/bundle/
+```
 
 ## Run locally
 

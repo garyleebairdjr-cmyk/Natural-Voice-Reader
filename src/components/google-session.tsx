@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Cloud, CloudOff, FolderOpen, LogIn, LogOut } from "lucide-react";
-import { getGooglePublicConfig, type GooglePublicConfig } from "@/lib/google/config.functions";
+import { getGooglePublicConfig, type GooglePublicConfig } from "@/lib/platform";
 import {
   clearGoogleSession,
   fetchProfile,
