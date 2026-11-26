@@ -189,9 +189,21 @@ export default defineConfig(({ command, isPreview, mode }) => {
     host: "0.0.0.0",
     port: 8080,
     strictPort: true,
-    // The Rust build output holds tens of thousands of files and can exhaust
-    // the system's file-watcher limit; none of it affects the web app.
-    watch: { ignored: ["**/src-tauri/target/**", "**/src-tauri/gen/**", "**/dist/**", "**/Portable/**"] },
+    // Folders the web app never imports. The Rust and Android build output
+    // alone holds tens of thousands of files, and watching them exhausts the
+    // file-watcher limit the whole desktop session shares.
+    watch: {
+      ignored: [
+        "**/src-tauri/**",
+        "**/.grok-changes/**",
+        "**/.vercel/**",
+        "**/dist/**",
+        "**/Portable/**",
+        "**/docs/**",
+        "**/screenshots/**",
+        "**/tmp-nvr-shots/**",
+      ],
+    },
   },
   preview: {
     host: "127.0.0.1",
