@@ -62,6 +62,7 @@ import { useGoogleSession } from "@/components/google-session";
 import { VOICE_PREVIEW_LINE } from "@/lib/voice-picker";
 import { VoiceVisualizer } from "@/components/voice-visualizer";
 import { formatDuration, pieceAtChar, secondsToRead, wordCount } from "@/lib/reading-time";
+import { pieceBounds, progressAt, seekTarget } from "@/lib/seek";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
@@ -160,6 +161,8 @@ export function LaneApp() {
   const [focusMode, setFocusMode] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [dragging, setDragging] = useState(false);
+  /** Where the finger or pointer is on the card bar while dragging, 0 to 1. */
+  const [scrub, setScrub] = useState<number | null>(null);
   const [stageVisible, setStageVisible] = useState(true);
   const stageRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -202,7 +205,7 @@ export function LaneApp() {
   const wakeRef = useRef<WakeLockSentinel | null>(null);
   const advanceRef = useRef<(fromIndex: number) => void>(() => {});
   /** Which spoken piece of the current card is loaded, so progress covers the whole card. */
-  const pieceRef = useRef({ index: 0, count: 1 });
+  const pieceRef = useRef<{ index: number; count: number; bounds: number[] }>({ index: 0, count: 1, bounds: [0, 1] });
 
   const phaseRef = useRef<Phase>("idle");
   phaseRef.current = phase;
@@ -282,8 +285,7 @@ export function LaneApp() {
       const d = audio.duration;
       const within = d && Number.isFinite(d) ? audio.currentTime / d : 0;
       if (modeRef.current === "lane") {
-        const { index: piece, count } = pieceRef.current;
-        setProgress(Math.min(1, (piece + within) / Math.max(1, count)));
+        setProgress(progressAt(pieceRef.current.bounds, pieceRef.current.index, within));
       } else {
         setProgress(within);
       }
@@ -829,7 +831,7 @@ export function LaneApp() {
   async function playGeneratedPieces(pieces: string[], voice: string, token: number, startAt: number, cardId: string) {
     const audio = audioRef.current;
     if (!audio) return;
-    pieceRef.current.count = pieces.length;
+    pieceRef.current = { ...pieceRef.current, count: pieces.length, bounds: pieceBounds(pieces) };
     for (let i = startAt; i < pieces.length; i++) {
       if (token !== gen.current || modeRef.current !== "lane") return;
       pieceRef.current.index = i;
@@ -850,7 +852,7 @@ export function LaneApp() {
         audio.pause();
         return;
       }
-      setProgress((i + (audio.currentTime && audio.duration ? audio.currentTime / audio.duration : 0)) / pieces.length);
+      setProgress(progressAt(pieceRef.current.bounds, i, audio.currentTime && audio.duration ? audio.currentTime / audio.duration : 0));
       await waitForAudioEnd(token);
     }
   }
@@ -859,12 +861,16 @@ export function LaneApp() {
   function speakOnDevice(pieces: string[], from: number, item: { id: string; text: string }, token: number) {
     const rest = pieces.length > 0 ? pieces.slice(from) : [item.text];
     const text = rest.join(" ");
-    const before = pieces.slice(0, from).join(" ").length;
-    const total = Math.max(1, pieces.join(" ").length);
-    pieceRef.current = { index: from, count: Math.max(1, pieces.length) };
+    const bounds = pieceBounds(pieces);
+    // Where each remaining sentence starts in the spoken text (joined by single spaces).
+    const starts: number[] = [];
+    rest.reduce((at, piece) => (starts.push(at), at + piece.length + 1), 0);
+    pieceRef.current = { index: from, count: Math.max(1, pieces.length), bounds };
     return playDevice(text, token, useLane.getState().speed, (charIndex) => {
-      setProgress(Math.min(1, (before + charIndex) / total));
-      const piece = pieceAtChar(rest, charIndex) + from;
+      const local = pieceAtChar(rest, charIndex);
+      const within = (charIndex - (starts[local] ?? 0)) / Math.max(1, rest[local]?.length ?? 1);
+      const piece = local + from;
+      setProgress(progressAt(bounds, piece, within));
       if (spokenRef.current?.cardId !== item.id || spokenRef.current.piece !== piece) markPiece(item.id, piece);
     });
   }
@@ -886,7 +892,7 @@ export function LaneApp() {
     setError(null);
     setNote(null);
     setAuditionId(null);
-    pieceRef.current = { index: 0, count: 1 };
+    pieceRef.current = { index: 0, count: 1, bounds: [0, 1] };
     modeRef.current = "lane";
     const allPieces = splitForStreaming(nextCard.text);
     const from = Math.min(Math.max(0, startPiece), Math.max(0, allPieces.length - 1));
@@ -915,7 +921,7 @@ export function LaneApp() {
         setPhase("idle");
         return;
       }
-      pieceRef.current = { index: from, count: pieces.length };
+      pieceRef.current = { index: from, count: pieces.length, bounds: pieceBounds(pieces) };
       const first = await ensureAudio(pieces[from]!, voice.id, ac.signal);
       if (token !== gen.current) return;
       const audio = audioRef.current;
@@ -1027,7 +1033,7 @@ export function LaneApp() {
       const token = ++gen.current;
       modeRef.current = "lane";
       abortRef.current = new AbortController();
-      pieceRef.current = { index: at, count: Math.max(1, pieces.length) };
+      pieceRef.current = { index: at, count: Math.max(1, pieces.length), bounds: pieceBounds(pieces) };
       audio.playbackRate = speedAppliedRef.current ? 1 : state.speed;
       applyPlayback(audio, { softRoom: state.softRoom, gain: effectiveGain(state.volume, state.muted) });
       const cardIndex = state.index;
@@ -1055,6 +1061,55 @@ export function LaneApp() {
   }
   const toggleRef = useRef(toggle);
   toggleRef.current = toggle;
+
+  /**
+   * Move to a point on the card bar. Inside the sentence whose audio is loaded
+   * this seeks by time; anywhere else it goes to the start of that sentence,
+   * since later sentences are only generated when they are needed. While
+   * playing, reading continues from there; while paused, that sentence is
+   * cued so Play starts from it.
+   */
+  function seekCard(fraction: number) {
+    const state = useLane.getState();
+    const current = state.cards[state.index];
+    if (!current) return;
+    const pieces = splitForStreaming(current.text);
+    if (pieces.length === 0) return;
+    const bounds = pieceBounds(pieces);
+    const { piece, within } = seekTarget(bounds, fraction);
+    const voice = voiceForCardIn(installedVoices, state.index, state.voiceId, state.rotate);
+    const audio = audioRef.current;
+    const phaseNow = phaseRef.current;
+    const loadedKeyForPiece =
+      voice.id === "device"
+        ? null
+        : audioCacheKey(voice.id, pieces[piece]!, resolveSpeechRoute(voice.id, state.ttsModel).cacheKey, state.speed);
+    const loadedHere =
+      loadedKeyForPiece !== null &&
+      loadedKey.current === loadedKeyForPiece &&
+      playingId.current === current.id &&
+      modeRef.current === "lane" &&
+      (phaseNow === "playing" || phaseNow === "paused") &&
+      audio !== null &&
+      Number.isFinite(audio.duration) &&
+      audio.duration > 0;
+    if (loadedHere && audio) {
+      audio.currentTime = Math.min(audio.duration - 0.05, within * audio.duration);
+      pieceRef.current = { index: piece, count: pieces.length, bounds };
+      markPiece(current.id, piece);
+      setProgress(progressAt(bounds, piece, within));
+      return;
+    }
+    if (phaseNow === "playing" || phaseNow === "loading" || modeRef.current === "audition") {
+      void playAt(state.index, piece);
+      return;
+    }
+    // Paused or stopped: cue the sentence without starting.
+    pieceRef.current = { index: piece, count: pieces.length, bounds };
+    markPiece(current.id, piece);
+    setProgress(bounds[piece] ?? 0);
+    setPhase("paused");
+  }
 
   function next() {
     const state = useLane.getState();
@@ -1388,6 +1443,17 @@ export function LaneApp() {
   const leftOnCard = cardSeconds * (1 - Math.min(1, Math.max(0, progress)));
   const leftInQueue = leftOnCard + secondsToRead(laterWords, speed);
   const showMini = !stageVisible && cards.length > 0 && !focusMode;
+  const bounds = useMemo(() => pieceBounds(cardPieces), [cardPieces]);
+  const scrubTarget = scrub === null || !card || cardPieces.length === 0 ? null : seekTarget(bounds, scrub);
+  const currentPiece = spokenHere ?? seekTarget(bounds, progress).piece;
+  const voiceIsDevice = speaking.id === "device";
+  // While dragging, show where release will land: exact inside the loaded sentence, else the sentence start.
+  const barFraction =
+    scrubTarget === null
+      ? progress
+      : !voiceIsDevice && spokenHere === scrubTarget.piece && phase !== "idle" && phase !== "loading"
+        ? scrub!
+        : bounds[scrubTarget.piece] ?? 0;
 
   function themeButton(value: ThemeName, label: string, Icon: typeof Sun) {
     return (
@@ -1490,6 +1556,83 @@ export function LaneApp() {
     );
   }
 
+  function seekBar() {
+    const count = cardPieces.length;
+    const enabled = Boolean(card) && count > 0;
+    const fractionAt = (event: React.PointerEvent<HTMLDivElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      return Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+    };
+    const stepTo = (piece: number) => seekCard(bounds[Math.min(count - 1, Math.max(0, piece))] ?? 0);
+    const preview = scrubTarget ? cardPieces[scrubTarget.piece] ?? "" : "";
+    return (
+      <div
+        className="nvr-seek"
+        role="slider"
+        tabIndex={enabled ? 0 : -1}
+        aria-label="Position in card"
+        aria-disabled={!enabled}
+        aria-valuemin={1}
+        aria-valuemax={Math.max(1, count)}
+        aria-valuenow={enabled ? currentPiece + 1 : 1}
+        aria-valuetext={enabled ? `Sentence ${currentPiece + 1} of ${count}` : "Nothing queued"}
+        data-scrubbing={scrub !== null ? "true" : undefined}
+        title="Drag to move between sentences"
+        onPointerDown={(event) => {
+          if (!enabled || event.button > 0) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setScrub(fractionAt(event));
+        }}
+        onPointerMove={(event) => {
+          if (scrub === null) return;
+          setScrub(fractionAt(event));
+        }}
+        onPointerUp={(event) => {
+          if (scrub === null) return;
+          const f = fractionAt(event);
+          setScrub(null);
+          seekCard(f);
+        }}
+        onPointerCancel={() => setScrub(null)}
+        onLostPointerCapture={() => setScrub(null)}
+        onKeyDown={(event) => {
+          if (!enabled) return;
+          let piece: number | null = null;
+          if (event.key === "ArrowLeft" || event.key === "ArrowDown") piece = currentPiece - 1;
+          else if (event.key === "ArrowRight" || event.key === "ArrowUp") piece = currentPiece + 1;
+          else if (event.key === "Home") piece = 0;
+          else if (event.key === "End") piece = count - 1;
+          if (piece === null) return;
+          // Keep the arrows from also moving between cards.
+          event.preventDefault();
+          event.stopPropagation();
+          stepTo(piece);
+        }}
+      >
+        <div className="nvr-progress">
+          <span style={{ width: `${(barFraction * 100).toFixed(2)}%` }} />
+          {count > 1 && count <= 80
+            ? bounds.slice(1, -1).map((at, i) => (
+                <i key={i} className="nvr-tick" style={{ left: `${(at * 100).toFixed(2)}%` }} aria-hidden="true" />
+              ))
+            : null}
+        </div>
+        {scrubTarget ? (
+          <div
+            className="nvr-seek-bubble"
+            style={{ left: `clamp(8rem, ${(barFraction * 100).toFixed(2)}%, calc(100% - 8rem))` }}
+            aria-hidden="true"
+          >
+            <span className="font-mono text-[10px] text-amber tabular-nums">
+              {scrubTarget.piece + 1} / {count}
+            </span>
+            <span className="line-clamp-2">{preview}</span>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   function readAlong() {
     if (!card) return null;
     if (cardPieces.length === 0) return <p className="nvr-stage-text text-xl leading-snug font-medium text-read sm:text-[1.65rem]">{card.text}</p>;
@@ -1497,12 +1640,14 @@ export function LaneApp() {
       <p className="nvr-stage-text text-xl leading-[1.45] font-medium text-pretty text-read sm:text-[1.65rem]">
         {cardPieces.map((piece, i) => {
           const state = spokenHere == null ? undefined : i < spokenHere ? "done" : i === spokenHere ? "live" : undefined;
+          const target = scrubTarget?.piece === i;
           return (
             <span key={i}>
               <span
                 className="nvr-sentence"
                 data-piece={i}
                 data-state={state}
+                data-target={target ? "true" : undefined}
                 role="button"
                 tabIndex={0}
                 title="Read from here"
@@ -1698,10 +1843,8 @@ export function LaneApp() {
               )}
             </div>
 
-            <div className="relative mt-6 flex flex-col gap-2">
-              <div className="nvr-progress" role="progressbar" aria-label="Card progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
-                <span style={{ width: `${Math.round(progress * 100)}%` }} />
-              </div>
+            <div className="relative mt-5 flex flex-col gap-1">
+              {seekBar()}
               <div className="flex justify-between font-mono text-[11px] text-muted tabular-nums">
                 <span>{formatDuration(cardSeconds - leftOnCard)}</span>
                 <span>−{formatDuration(leftOnCard)}</span>
