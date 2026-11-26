@@ -7,22 +7,25 @@ browser.
 
 ## Screenshots
 
-Dark and light themes, settings hidden so the queue can use the full width,
-the searchable voice picker, the community pack browser, and a phone-sized
-layout. Appearance can follow the system theme, and four accents (Amber, Sky,
-Sage, and Violet) tint the controls in both modes.
+Dark and light themes while a voice is reading, settings hidden so the reader
+can use the full width, focus mode, the searchable voice picker, the community
+pack browser, and a phone-sized layout. Appearance can follow the system
+theme, and four accents (Solar, Cyan, Mint, and Violet) tint the controls in
+both modes.
 
-![The reader in the dark theme, with the sample queue and settings open.](docs/screenshots/desktop-dark.png)
+![The reader in the dark theme while Leo reads: the visualizer follows the voice, the spoken sentence is faded, and the sentence being read is highlighted.](docs/screenshots/desktop-dark.png)
 
-![The reader in the light theme, with a warm paper background and the sample queue.](docs/screenshots/desktop-light.png)
+![The reader in the light theme with the violet accent, mid-sentence.](docs/screenshots/desktop-light.png)
 
-![The same desktop layout with the settings panel hidden so the queue can use the full width.](docs/screenshots/settings-hidden.png)
+![The same desktop layout with the settings panel hidden so the reader can use the full width.](docs/screenshots/settings-hidden.png)
 
-![The searchable voice picker, with a compact control in the playback bar.](docs/screenshots/voice-picker.png)
+![Focus mode, which leaves only the text, the visualizer, and the playback controls.](docs/screenshots/focus-mode.png)
+
+![The searchable voice picker, opened from the compact control under the play button.](docs/screenshots/voice-picker.png)
 
 ![The Browse voice packs dialog, listing community packs with licenses and filters.](docs/screenshots/browse-packs.png)
 
-![The reader on a narrow phone screen.](docs/screenshots/mobile.png)
+![The reader on a narrow phone screen while a voice is reading.](docs/screenshots/mobile.png)
 
 ## Requirements
 
@@ -240,6 +243,16 @@ System (the default for new readers, following the device theme), and pick an
 accent for buttons and highlights. On screens narrower than
 1024px the panel starts collapsed and opens as a slide-over drawer. That
 preference is saved with the rest of the reader settings.
+
+While a card plays, the sentence being read is highlighted and sentences
+already read fade back, and the visualizer follows the voice. Tap or click
+any sentence to read from there. Pause and Play pick up at the same sentence.
+Press `F` for focus mode, which hides everything but the text and the playback
+controls. Once you scroll past the reader, a mini player stays at the bottom
+of the screen. The reader also shows the time left on the card and in the
+queue. To queue a text or Markdown file, use **Open file** or drop it on the
+page. Press `?` for the keyboard shortcuts: Space plays or pauses, the arrow
+keys move between cards, `[` and `]` change speed, and `M` mutes.
 
 Next to the speed buttons, choose what happens when a card ends. **Card** (the
 default) stops and cues the next card, so Play continues where you left off.
