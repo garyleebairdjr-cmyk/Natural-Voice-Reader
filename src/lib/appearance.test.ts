@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
   ACCENT_TOKENS,
   ACCENTS,
   THEME_BOOT_SCRIPT,
+  THEME_COLOR,
   THEME_SURFACES,
   defaultInk,
   inkFits,
@@ -85,6 +87,27 @@ describe("appearance", () => {
         assert.ok(contrast(token.on, token.accent) >= 4.5, `${mode} ${name} on-accent`);
         assert.ok(contrast(token.on, token.hover) >= 4.5, `${mode} ${name} on hover`);
       }
+    }
+  });
+
+  it("keeps styles.css and the boot script in sync with the palette", () => {
+    const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8").toLowerCase();
+    const block = (selector: string) => {
+      const at = css.indexOf(selector + " {");
+      assert.ok(at >= 0, `missing ${selector}`);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    for (const mode of ["light", "dark"] as const) {
+      const surfaces = block(`html[data-theme="${mode}"]`);
+      for (const [name, value] of Object.entries(THEME_SURFACES[mode])) {
+        assert.ok(surfaces.includes(`--color-${name}: ${value};`), `${mode} ${name}`);
+      }
+      for (const [id, token] of Object.entries(ACCENT_TOKENS[mode])) {
+        const accent = block(`html[data-theme="${mode}"][data-ink="${id}"]`);
+        assert.ok(accent.includes(`--color-amber: ${token.accent};`), `${mode} ${id} accent`);
+        assert.ok(accent.includes(`--color-ink: ${token.on};`), `${mode} ${id} on`);
+      }
+      assert.ok(THEME_BOOT_SCRIPT.includes(THEME_COLOR[mode]), `${mode} theme-color in boot script`);
     }
   });
 });

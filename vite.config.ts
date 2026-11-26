@@ -189,6 +189,9 @@ export default defineConfig(({ command, isPreview, mode }) => {
     host: "0.0.0.0",
     port: 8080,
     strictPort: true,
+    // The Rust build output holds tens of thousands of files and can exhaust
+    // the system's file-watcher limit; none of it affects the web app.
+    watch: { ignored: ["**/src-tauri/target/**", "**/src-tauri/gen/**", "**/dist/**", "**/Portable/**"] },
   },
   preview: {
     host: "127.0.0.1",

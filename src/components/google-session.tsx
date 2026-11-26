@@ -337,7 +337,7 @@ export function useGoogleSession(): {
               Sign out
             </button>
           </div>
-          <label className="flex items-start gap-3 rounded-2xl border border-line bg-surface px-3 py-3 text-sm text-fg">
+          <label className="flex items-start gap-3 rounded-2xl chip px-3 py-3 text-sm text-fg">
             <input
               type="checkbox"
               className="mt-1"
@@ -364,7 +364,7 @@ export function useGoogleSession(): {
             type="button"
             onClick={() => void signIn()}
             disabled={busy}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-line bg-surface px-3 text-sm font-semibold text-fg disabled:opacity-55"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full chip px-3 text-sm font-semibold text-fg disabled:opacity-55"
           >
             <LogIn className="size-4" />
             Sign in with Google
@@ -379,7 +379,7 @@ export function useGoogleSession(): {
       type="button"
       onClick={() => void addFromDrive()}
       disabled={busy}
-      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-fg disabled:opacity-55"
+      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full chip px-4 text-sm font-semibold text-fg disabled:opacity-55"
     >
       <FolderOpen className="size-4" />
       Open from Google Drive
@@ -401,7 +401,7 @@ export function useGoogleSession(): {
           <button type="button" className="min-h-11 rounded-full border border-line px-4 text-sm font-semibold text-fg" onClick={() => { intro.resolve(false); setIntro(null); }}>
             Don&apos;t save to Drive
           </button>
-          <button type="button" className="min-h-11 rounded-full bg-amber px-4 text-sm font-semibold text-ink" onClick={() => { intro.resolve(true); setIntro(null); }}>
+          <button type="button" className="min-h-11 rounded-full btn-accent px-4 text-sm font-semibold" onClick={() => { intro.resolve(true); setIntro(null); }}>
             Save to Google Drive
           </button>
         </div>

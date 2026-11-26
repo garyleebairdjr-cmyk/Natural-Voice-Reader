@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AudioLines,
+  AudioWaveform,
   Download,
+  FileText,
+  Keyboard,
+  Maximize2,
+  Minimize2,
+  Shuffle,
+  Sparkles,
+  Waves,
+  X,
   Link2,
   ListEnd,
   Loader2,
@@ -25,7 +35,7 @@ import { Toaster, toast } from "sonner";
 import { getTtsStatus, isDesktopApp, prepareTtsEngine, synthesizeSpeech } from "@/lib/platform";
 import { APP_VERSION_LABEL } from "@/lib/build-info";
 import { readPage } from "@/lib/platform";
-import { defaultInk, inksFor, inkFits, migrateInk, resolveTheme, type ThemeName } from "@/lib/appearance";
+import { THEME_COLOR, defaultInk, inksFor, inkFits, migrateInk, resolveTheme, type ThemeName } from "@/lib/appearance";
 import {
   cardAfterFinish,
   cardForNext,
@@ -42,7 +52,7 @@ import { DEVICE_VOICE, canonicalVoiceId, isVoiceId, voiceAccentLabel, voiceById,
 import { splitForStreaming } from "@/lib/sentences";
 import { isLoadingVoiceError, modelLabel, TTS_MODELS, type TtsStatus } from "@/lib/tts-config";
 import { resolveSpeechRoute } from "@/lib/voice-routing";
-import { applyPlayback } from "@/lib/soft-room";
+import { analyserFor, applyPlayback } from "@/lib/soft-room";
 import { joinClips } from "@/lib/audio-join";
 import { listVoicePacks } from "@/lib/platform";
 import { voicesInInstalledPacks, type VoicePackStatus } from "@/lib/voice-packs";
@@ -50,6 +60,8 @@ import { VoicePackSettings } from "@/components/voice-pack-settings";
 import { VoicePicker } from "@/components/voice-picker";
 import { useGoogleSession } from "@/components/google-session";
 import { VOICE_PREVIEW_LINE } from "@/lib/voice-picker";
+import { VoiceVisualizer } from "@/components/voice-visualizer";
+import { formatDuration, pieceAtChar, secondsToRead, wordCount } from "@/lib/reading-time";
 
 type Phase = "idle" | "loading" | "playing" | "paused";
 
@@ -140,6 +152,17 @@ export function LaneApp() {
   const [packs, setPacks] = useState<VoicePackStatus[] | null>(null);
   const [wide, setWide] = useState(true);
   const [confirmAction, setConfirmAction] = useState<null | "clear" | "reset">(null);
+  /** The sentence being read, for read-along highlighting and resuming where playback paused. */
+  const [spoken, setSpoken] = useState<{ cardId: string; piece: number } | null>(null);
+  const spokenRef = useRef<{ cardId: string; piece: number } | null>(null);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const [deviceSpeaking, setDeviceSpeaking] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [showKeys, setShowKeys] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [stageVisible, setStageVisible] = useState(true);
+  const stageRef = useRef<HTMLElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -249,7 +272,7 @@ export function LaneApp() {
     root.dataset.ink = activeInk;
     root.style.colorScheme = resolvedTheme;
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", resolvedTheme === "light" ? "#f3eee4" : "#14161c");
+    if (meta) meta.setAttribute("content", THEME_COLOR[resolvedTheme]);
   }, [appearanceReady, theme, ink, resolvedTheme, setInk]);
 
   useEffect(() => {
@@ -394,6 +417,59 @@ export function LaneApp() {
   }, []);
 
   const settingsOpen = settingsOpenPref ?? defaultSettingsOpen(wide);
+
+  // Show the floating mini player once the main stage scrolls out of view.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([entry]) => setStageVisible(Boolean(entry?.isIntersecting)), { threshold: 0.12 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // Keep the live sentence in view on long cards while the stage is on screen.
+  useEffect(() => {
+    if (phase !== "playing" || !stageVisible || !spoken) return;
+    const el = document.querySelector<HTMLElement>(`[data-piece="${spoken.piece}"][data-state="live"]`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [spoken, phase, stageVisible]);
+
+  // Drop .txt or .md files anywhere to queue them.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth += 1;
+      setDragging(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      void addFilesRef.current(Array.from(e.dataTransfer?.files ?? []));
+    };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
   const pickerVoices = useMemo(() => [DEVICE_VOICE, ...installedVoices], [installedVoices]);
 
   useEffect(() => {
@@ -414,6 +490,36 @@ export function LaneApp() {
         }
       }
       if (typing) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowKeys((open) => !open);
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowKeys(false);
+        setFocusMode(false);
+        return;
+      }
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        setFocusMode((on) => !on);
+        return;
+      }
+      if (e.key === "m" || e.key === "M") {
+        e.preventDefault();
+        const state = useLane.getState();
+        state.setMuted(!(state.muted || state.volume === 0));
+        return;
+      }
+      if (e.key === "[" || e.key === "]") {
+        e.preventDefault();
+        const state = useLane.getState();
+        const at = SPEED_OPTIONS.findIndex((opt) => opt.value === state.speed);
+        const nextAt = Math.min(SPEED_OPTIONS.length - 1, Math.max(0, (at < 0 ? 1 : at) + (e.key === "]" ? 1 : -1)));
+        state.setSpeed(SPEED_OPTIONS[nextAt]!.value);
+        return;
+      }
       if (e.key === " " || e.code === "Space") {
         e.preventDefault();
         toggleRef.current();
@@ -624,7 +730,21 @@ export function LaneApp() {
     });
   }
 
-  function playDevice(text: string, token: number, rate: number) {
+  function markPiece(cardId: string, piece: number) {
+    const next = { cardId, piece };
+    spokenRef.current = next;
+    setSpoken(next);
+  }
+
+  /** Route playback through Web Audio once, inside the user's gesture, so the visualizer can read it. */
+  function wireVisualizer() {
+    const audio = audioRef.current;
+    if (!audio || analyser) return;
+    const node = analyserFor(audio);
+    if (node) setAnalyser(node);
+  }
+
+  function playDevice(text: string, token: number, rate: number, onChar?: (charIndex: number) => void) {
     return new Promise<void>((resolve, reject) => {
       if (!("speechSynthesis" in window)) {
         reject(new Error("This browser has no device voice."));
@@ -642,9 +762,11 @@ export function LaneApp() {
       if (picked) utterance.voice = picked;
       utterance.onboundary = (event) => {
         if (token !== gen.current || text.length === 0) return;
-        setProgress(Math.min(1, event.charIndex / text.length));
+        if (onChar) onChar(event.charIndex);
+        else setProgress(Math.min(1, event.charIndex / text.length));
       };
       const clearKeep = () => {
+        setDeviceSpeaking(false);
         if (deviceKeep.current != null) {
           window.clearInterval(deviceKeep.current);
           deviceKeep.current = null;
@@ -673,6 +795,7 @@ export function LaneApp() {
         window.speechSynthesis.pause();
         window.speechSynthesis.resume();
       }, 10000);
+      setDeviceSpeaking(true);
       window.speechSynthesis.speak(utterance);
     });
   }
@@ -703,13 +826,14 @@ export function LaneApp() {
   }
   advanceRef.current = advanceAfter;
 
-  async function playGeneratedPieces(pieces: string[], voice: string, token: number, startAt: number) {
+  async function playGeneratedPieces(pieces: string[], voice: string, token: number, startAt: number, cardId: string) {
     const audio = audioRef.current;
     if (!audio) return;
     pieceRef.current.count = pieces.length;
     for (let i = startAt; i < pieces.length; i++) {
       if (token !== gen.current || modeRef.current !== "lane") return;
       pieceRef.current.index = i;
+      markPiece(cardId, i);
       const piece = pieces[i]!;
       prefetchUpcoming(pieces, i, useLane.getState().index, voice);
       const { key, url, speedApplied } = await ensureAudio(piece, voice, abortRef.current?.signal);
@@ -731,13 +855,28 @@ export function LaneApp() {
     }
   }
 
-  async function playAt(nextIndex: number) {
+  /** Speak from one sentence to the end of the card with the device voice, tracking the live sentence. */
+  function speakOnDevice(pieces: string[], from: number, item: { id: string; text: string }, token: number) {
+    const rest = pieces.length > 0 ? pieces.slice(from) : [item.text];
+    const text = rest.join(" ");
+    const before = pieces.slice(0, from).join(" ").length;
+    const total = Math.max(1, pieces.join(" ").length);
+    pieceRef.current = { index: from, count: Math.max(1, pieces.length) };
+    return playDevice(text, token, useLane.getState().speed, (charIndex) => {
+      setProgress(Math.min(1, (before + charIndex) / total));
+      const piece = pieceAtChar(rest, charIndex) + from;
+      if (spokenRef.current?.cardId !== item.id || spokenRef.current.piece !== piece) markPiece(item.id, piece);
+    });
+  }
+
+  async function playAt(nextIndex: number, startPiece = 0) {
     const state = useLane.getState();
     const nextCard = state.cards[nextIndex];
     if (!nextCard) {
       setPhase("idle");
       return;
     }
+    wireVisualizer();
     const token = ++gen.current;
     endedWaiter.current = null;
     stopDevice();
@@ -749,6 +888,9 @@ export function LaneApp() {
     setAuditionId(null);
     pieceRef.current = { index: 0, count: 1 };
     modeRef.current = "lane";
+    const allPieces = splitForStreaming(nextCard.text);
+    const from = Math.min(Math.max(0, startPiece), Math.max(0, allPieces.length - 1));
+    markPiece(nextCard.id, from);
 
     const markPlaying = () => {
       playingId.current = nextCard.id;
@@ -760,7 +902,7 @@ export function LaneApp() {
     try {
       if (voice.id === "device") {
         markPlaying();
-        await playDevice(nextCard.text, token, useLane.getState().speed);
+        await speakOnDevice(allPieces, from, nextCard, token);
         if (token !== gen.current || modeRef.current !== "lane") return;
         advanceRef.current(nextIndex);
         return;
@@ -768,13 +910,13 @@ export function LaneApp() {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
-      const pieces = splitForStreaming(nextCard.text);
+      const pieces = allPieces;
       if (pieces.length === 0) {
         setPhase("idle");
         return;
       }
-      pieceRef.current = { index: 0, count: pieces.length };
-      const first = await ensureAudio(pieces[0]!, voice.id, ac.signal);
+      pieceRef.current = { index: from, count: pieces.length };
+      const first = await ensureAudio(pieces[from]!, voice.id, ac.signal);
       if (token !== gen.current) return;
       const audio = audioRef.current;
       if (!audio) return;
@@ -782,7 +924,7 @@ export function LaneApp() {
       audio.src = first.url;
       loadedKey.current = first.key;
       audio.playbackRate = first.speedApplied ? 1 : useLane.getState().speed;
-      prefetchUpcoming(pieces, 0, nextIndex, voice.id);
+      prefetchUpcoming(pieces, from, nextIndex, voice.id);
       applyPlayback(audio, { softRoom: useLane.getState().softRoom, gain: effectiveGain(useLane.getState().volume, useLane.getState().muted) });
       await audio.play();
       if (token !== gen.current) {
@@ -792,8 +934,8 @@ export function LaneApp() {
       markPlaying();
       await waitForAudioEnd(token);
       if (token !== gen.current || modeRef.current !== "lane") return;
-      if (pieces.length > 1) {
-        await playGeneratedPieces(pieces, voice.id, token, 1);
+      if (pieces.length > from + 1) {
+        await playGeneratedPieces(pieces, voice.id, token, from + 1, nextCard.id);
       }
       if (token !== gen.current || modeRef.current !== "lane") return;
       advanceRef.current(nextIndex);
@@ -823,7 +965,7 @@ export function LaneApp() {
         );
         try {
           markPlaying();
-          await playDevice(nextCard.text, token, useLane.getState().speed);
+          await speakOnDevice(allPieces, from, nextCard, token);
           if (token !== gen.current || modeRef.current !== "lane") return;
           advanceRef.current(nextIndex);
           return;
@@ -863,30 +1005,53 @@ export function LaneApp() {
       pause();
       return;
     }
+    wireVisualizer();
     const current = state.cards[state.index];
-    const voice = current ? voiceForCardIn(installedVoices, state.index, state.voiceId, state.rotate) : null;
-    const key = current && voice
-      ? audioCacheKey(voice.id, splitForStreaming(current.text)[0] ?? current.text, state.ttsModel, state.speed)
-      : null;
+    if (!current) return;
+    const voice = voiceForCardIn(installedVoices, state.index, state.voiceId, state.rotate);
+    const pieces = splitForStreaming(current.text);
+    const at = phaseRef.current === "paused" && spokenRef.current?.cardId === current.id ? spokenRef.current.piece : 0;
     const audio = audioRef.current;
+    const key = voice.id === "device"
+      ? null
+      : audioCacheKey(voice.id, pieces[at] ?? current.text, resolveSpeechRoute(voice.id, state.ttsModel).cacheKey, state.speed);
     if (
       phaseRef.current === "paused" &&
       audio &&
       key &&
       loadedKey.current === key &&
-      playingId.current === current?.id &&
+      playingId.current === current.id &&
       !audio.ended
     ) {
+      // Pick up mid-sentence, then carry on with the rest of the card.
+      const token = ++gen.current;
+      modeRef.current = "lane";
+      abortRef.current = new AbortController();
+      pieceRef.current = { index: at, count: Math.max(1, pieces.length) };
       audio.playbackRate = speedAppliedRef.current ? 1 : state.speed;
-      applyPlayback(audio, { softRoom: useLane.getState().softRoom, gain: effectiveGain(useLane.getState().volume, useLane.getState().muted) });
-      void audio.play().then(() => {
-        setPhase("playing");
-        void holdScreen();
-        if (current && voice) publishSession(current.text, voice.name, true);
-      });
+      applyPlayback(audio, { softRoom: state.softRoom, gain: effectiveGain(state.volume, state.muted) });
+      const cardIndex = state.index;
+      void (async () => {
+        try {
+          await audio.play();
+          if (token !== gen.current) return;
+          setPhase("playing");
+          void holdScreen();
+          publishSession(current.text, voice.name, true);
+          await waitForAudioEnd(token);
+          if (token !== gen.current || modeRef.current !== "lane") return;
+          if (at + 1 < pieces.length) await playGeneratedPieces(pieces, voice.id, token, at + 1, current.id);
+          if (token !== gen.current || modeRef.current !== "lane") return;
+          advanceRef.current(cardIndex);
+        } catch (err) {
+          if (isAbort(err) || token !== gen.current) return;
+          setPhase("paused");
+          setError(err instanceof Error ? err.message : "Could not resume that card.");
+        }
+      })();
       return;
     }
-    void playAt(state.index);
+    void playAt(state.index, at);
   }
   const toggleRef = useRef(toggle);
   toggleRef.current = toggle;
@@ -915,6 +1080,7 @@ export function LaneApp() {
 
   async function audition(voice: Voice) {
     if (phaseRef.current === "playing" || phaseRef.current === "loading") pause();
+    wireVisualizer();
     const token = ++gen.current;
     endedWaiter.current = null;
     setAuditionId(voice.id);
@@ -960,6 +1126,7 @@ export function LaneApp() {
 
   async function previewVoice(voice: Voice) {
     if (phaseRef.current === "playing" || phaseRef.current === "loading") pause();
+    wireVisualizer();
     const token = ++gen.current;
     endedWaiter.current = null;
     setAuditionId(voice.id);
@@ -1009,10 +1176,10 @@ export function LaneApp() {
         aria-keyshortcuts=","
         aria-label={settingsOpen ? "Hide settings" : "Show settings"}
         title={settingsOpen ? "Hide settings (,)" : "Show settings (,)"}
-        className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-3 text-sm font-semibold text-fg"
+        className="chip inline-flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-semibold text-fg"
       >
         {settingsOpen ? <PanelRightClose className="size-4" /> : <PanelRight className="size-4" />}
-        {settingsOpen ? "Hide settings" : "Settings"}
+        <span className="hidden sm:inline">{settingsOpen ? "Hide settings" : "Settings"}</span>
       </button>
     );
   }
@@ -1135,6 +1302,24 @@ export function LaneApp() {
     }
   }
 
+  async function addFiles(files: File[]) {
+    const readable = files.filter((file) => /^text\//.test(file.type) || /\.(txt|md|markdown|text)$/i.test(file.name));
+    if (readable.length === 0) {
+      setComposerNote(files.length ? "Only plain text and Markdown files can be added." : null);
+      return;
+    }
+    let added = 0;
+    for (const file of readable) {
+      const text = await file.text();
+      added += addPaste(text, "append");
+    }
+    const names = readable.length === 1 ? readable[0]!.name : `${readable.length} files`;
+    setComposerNote(added ? `Added ${added} ${added === 1 ? "card" : "cards"} from ${names}.` : `${names} had no readable text.`);
+    if (added) toast(`Queued ${names}`, { description: `${added} ${added === 1 ? "card" : "cards"} added` });
+  }
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
+
   function saveFile(url: string, name: string) {
     const link = document.createElement("a");
     link.href = url;
@@ -1189,528 +1374,769 @@ export function LaneApp() {
 
   const countLabel = cards.length === 0 ? "Empty queue" : `${index + 1} of ${cards.length}`;
   const inks = inksFor();
+  const isLive = phase === "playing" || phase === "loading";
+  const volumeOff = muted || volume === 0;
 
-  function transportBar(label: string) {
+  const cardPieces = useMemo(() => (card ? splitForStreaming(card.text) : []), [card]);
+  const spokenHere = card && spoken && spoken.cardId === card.id && phase !== "idle" && !auditionId ? spoken.piece : null;
+  const cardWords = useMemo(() => (card ? wordCount(card.text) : 0), [card]);
+  const laterWords = useMemo(
+    () => cards.slice(index + 1).reduce((sum, item) => sum + wordCount(item.text), 0),
+    [cards, index],
+  );
+  const cardSeconds = secondsToRead(cardWords, speed);
+  const leftOnCard = cardSeconds * (1 - Math.min(1, Math.max(0, progress)));
+  const leftInQueue = leftOnCard + secondsToRead(laterWords, speed);
+  const showMini = !stageVisible && cards.length > 0 && !focusMode;
+
+  function themeButton(value: ThemeName, label: string, Icon: typeof Sun) {
     return (
-      <div className="flex flex-wrap items-center justify-center gap-3" aria-label={label}>
+      <button type="button" onClick={() => chooseTheme(value)} aria-pressed={theme === value} aria-label={label} title={label}>
+        <Icon className="size-4" />
+        <span className="hidden xl:inline">{label}</span>
+      </button>
+    );
+  }
+
+  function playButton(size: "lg" | "sm") {
+    const big = size === "lg";
+    return (
+      <button
+        type="button"
+        aria-label={isLive ? "Pause" : "Play"}
+        onClick={toggle}
+        disabled={cards.length === 0}
+        data-live={phase === "playing" && big ? "true" : undefined}
+        className={
+          "nvr-play btn-accent inline-flex shrink-0 items-center justify-center rounded-full " +
+          (big ? "size-20 sm:size-[5.5rem]" : "size-12")
+        }
+      >
+        {phase === "loading" ? (
+          <Loader2 className={(big ? "size-8" : "size-5") + " animate-spin"} />
+        ) : phase === "playing" ? (
+          <Pause className={(big ? "size-8" : "size-5") + " fill-current"} />
+        ) : (
+          <Play className={(big ? "size-8" : "size-5") + " translate-x-0.5 fill-current"} />
+        )}
+      </button>
+    );
+  }
+
+  function skipButton(kind: "prev" | "next", size: "lg" | "sm") {
+    const Icon = kind === "prev" ? SkipBack : SkipForward;
+    return (
+      <button
+        type="button"
+        aria-label={kind === "prev" ? "Previous" : "Next"}
+        onClick={kind === "prev" ? prev : next}
+        disabled={cards.length === 0}
+        className={
+          "chip inline-flex shrink-0 items-center justify-center rounded-full text-fg " + (size === "lg" ? "size-14" : "size-11")
+        }
+      >
+        <Icon className={(size === "lg" ? "size-5" : "size-4") + " fill-current"} />
+      </button>
+    );
+  }
+
+  function volumeControl() {
+    return (
+      <div className="chip inline-flex min-h-12 items-center gap-1 rounded-full pr-3 pl-1">
         <button
           type="button"
-          aria-label="Previous"
-          onClick={prev}
-          disabled={cards.length === 0}
-          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-55"
+          aria-label={volumeOff ? "Unmute" : "Mute"}
+          aria-pressed={volumeOff}
+          aria-keyshortcuts="m"
+          title={volumeOff ? "Unmute (M)" : "Mute (M)"}
+          onClick={() => setMuted(!volumeOff)}
+          className={"inline-flex size-10 items-center justify-center rounded-full " + (volumeOff ? "text-muted" : "text-amber")}
         >
-          <SkipBack className="size-6" />
+          {volumeOff ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
         </button>
-        <button
-          type="button"
-          aria-label={phase === "playing" || phase === "loading" ? "Pause" : "Play"}
-          onClick={toggle}
-          disabled={cards.length === 0}
-          className="inline-flex size-20 items-center justify-center rounded-full bg-amber text-ink disabled:opacity-55"
-        >
-          {phase === "loading" ? (
-            <Loader2 className="size-8 animate-spin" />
-          ) : phase === "playing" ? (
-            <Pause className="size-8" />
-          ) : (
-            <Play className="size-8 translate-x-0.5" />
-          )}
-        </button>
-        <button
-          type="button"
-          aria-label="Next"
-          onClick={next}
-          disabled={cards.length === 0}
-          className="inline-flex size-14 items-center justify-center rounded-full border border-line bg-surface text-fg disabled:opacity-55"
-        >
-          <SkipForward className="size-6" />
-        </button>
-        {voicePicker(true)}
-        <button
-          type="button"
-          onClick={() => void downloadCard(index)}
-          disabled={!card || downloadingId === card?.id}
-          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-4 text-sm font-semibold text-fg disabled:opacity-55"
-        >
-          {downloadingId && downloadingId === card?.id ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Download className="size-4" />
-          )}
-          Download
-        </button>
-        <div className="inline-flex min-h-12 items-center gap-2 rounded-full border border-line bg-surface px-2">
-          <button
-            type="button"
-            aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
-            aria-pressed={muted || volume === 0}
-            title={muted || volume === 0 ? "Unmute" : "Mute"}
-            onClick={() => setMuted(!(muted || volume === 0))}
-            className={
-              "inline-flex size-11 items-center justify-center rounded-full " +
-              (muted || volume === 0 ? "text-muted" : "text-amber")
-            }
-          >
-            {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-          </button>
-          <input
-            type="range"
-            className="nvr-volume w-24 sm:w-28"
-            min={0}
-            max={100}
-            step={1}
-            value={volume}
-            onChange={(event) => setVolume(Number(event.target.value))}
-            aria-label="Volume"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={volume}
-            aria-valuetext={muted ? `Muted, ${volume} percent` : `${volume} percent`}
-          />
-          <span className="w-9 pr-1 text-xs font-semibold tabular-nums text-muted" aria-hidden="true">
-            {muted ? "Mute" : `${volume}%`}
-          </span>
-        </div>
+        <input
+          type="range"
+          className="nvr-volume w-24 sm:w-28"
+          style={{ ["--fill" as string]: `${muted ? 0 : volume}%` }}
+          min={0}
+          max={100}
+          step={1}
+          value={volume}
+          onChange={(event) => setVolume(Number(event.target.value))}
+          aria-label="Volume"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={volume}
+          aria-valuetext={muted ? `Muted, ${volume} percent` : `${volume} percent`}
+        />
+        <span className="w-9 text-right font-mono text-xs tabular-nums text-muted" aria-hidden="true">
+          {muted ? "Mute" : `${volume}%`}
+        </span>
       </div>
+    );
+  }
+
+  function downloadButton() {
+    return (
+      <button
+        type="button"
+        onClick={() => void downloadCard(index)}
+        disabled={!card || downloadingId === card?.id}
+        className="chip inline-flex min-h-12 items-center gap-2 rounded-full px-4 text-sm font-semibold text-fg"
+      >
+        {downloadingId && downloadingId === card?.id ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+        Download
+      </button>
+    );
+  }
+
+  function readAlong() {
+    if (!card) return null;
+    if (cardPieces.length === 0) return <p className="nvr-stage-text text-xl leading-snug font-medium text-read sm:text-[1.65rem]">{card.text}</p>;
+    return (
+      <p className="nvr-stage-text text-xl leading-[1.45] font-medium text-pretty text-read sm:text-[1.65rem]">
+        {cardPieces.map((piece, i) => {
+          const state = spokenHere == null ? undefined : i < spokenHere ? "done" : i === spokenHere ? "live" : undefined;
+          return (
+            <span key={i}>
+              <span
+                className="nvr-sentence"
+                data-piece={i}
+                data-state={state}
+                role="button"
+                tabIndex={0}
+                title="Read from here"
+                onClick={() => void playAt(index, i)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void playAt(index, i);
+                  }
+                }}
+              >
+                {piece}
+              </span>{" "}
+            </span>
+          );
+        })}
+      </p>
     );
   }
 
   return (
     <>
       <audio ref={audioRef} preload="none" className="hidden" />
-      <Toaster theme={resolvedTheme} position="bottom-center" richColors={false} />
-      <div className="nvr-shell" data-settings={settingsOpen ? "open" : "collapsed"}>
-      <button
-        type="button"
-        className="nvr-backdrop"
-        aria-label="Close settings"
-        tabIndex={settingsOpen && !wide ? 0 : -1}
-        onClick={() => setSettingsOpen(false)}
+      <Toaster theme={resolvedTheme} position="bottom-center" richColors={false} toastOptions={{ className: "glass-strong" }} />
+      <div className="nvr-aurora" aria-hidden="true">
+        <div className="nvr-aurora-grid" />
+        <div className="nvr-aurora-noise" />
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".txt,.md,.markdown,text/plain,text/markdown"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          void addFiles(Array.from(event.target.files ?? []));
+          event.target.value = "";
+        }}
       />
+      <div className="nvr-shell" data-settings={settingsOpen ? "open" : "collapsed"} data-focus={focusMode ? "true" : undefined}>
+        <button
+          type="button"
+          className="nvr-backdrop"
+          aria-label="Close settings"
+          tabIndex={settingsOpen && !wide ? 0 : -1}
+          onClick={() => setSettingsOpen(false)}
+        />
 
-      <section className="nvr-main flex min-w-0 flex-col gap-5 px-4 pt-5 pb-safe sm:px-6 lg:px-8 lg:pt-8 lg:pb-8">
-        <header className="flex flex-col gap-3">
-          <div className="flex items-start justify-between gap-3">
-            <h1 className="min-w-0 flex-1 font-display text-3xl leading-tight font-semibold text-balance text-fg sm:text-4xl">
-              Natural Voice Reader
-            </h1>
-            {settingsToggle()}
-          </div>
-          <p className="max-w-xl text-sm leading-relaxed text-muted">
-            Choose the Audio voice and read along, and/or download the audio file. (browsers may have limited
-            voice options)
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Appearance">
-              <button
-                type="button"
-                onClick={() => chooseTheme("light")}
-                aria-pressed={theme === "light"}
-                className={
-                  "inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-sm font-semibold " +
-                  (theme === "light" ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                <Sun className="size-4" />
-                Light
-              </button>
-              <button
-                type="button"
-                onClick={() => chooseTheme("dark")}
-                aria-pressed={theme === "dark"}
-                className={
-                  "inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-sm font-semibold " +
-                  (theme === "dark" ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                <Moon className="size-4" />
-                Dark
-              </button>
-              <button
-                type="button"
-                onClick={() => chooseTheme("system")}
-                aria-pressed={theme === "system"}
-                className={
-                  "inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-sm font-semibold " +
-                  (theme === "system" ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                <Monitor className="size-4" />
-                System
-              </button>
-            </div>
-            <div className="flex items-center gap-2" role="group" aria-label="Accent color">
-              {inks.map((item) => (
+        <section className="nvr-main flex min-w-0 flex-col gap-5 px-4 pt-5 pb-28 sm:px-6 lg:px-8 lg:pt-7">
+          <header className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <span className="btn-accent relative inline-flex size-11 shrink-0 items-center justify-center rounded-2xl" aria-hidden="true">
+                  <AudioLines className="size-5" />
+                </span>
+                <h1 className="min-w-0 text-2xl leading-none font-semibold tracking-tight text-fg sm:text-[1.75rem]">
+                  Natural <span className="text-gradient font-display text-[1.15em] font-normal italic">Voice</span> Reader
+                </h1>
+              </div>
+              <div className="nvr-hide-in-focus order-last flex w-full flex-wrap items-center gap-2 md:order-none md:w-auto">
+                <div className="seg" role="group" aria-label="Appearance">
+                  {themeButton("light", "Light", Sun)}
+                  {themeButton("dark", "Dark", Moon)}
+                  {themeButton("system", "System", Monitor)}
+                </div>
+                <div className="chip flex items-center gap-1 rounded-full p-1" role="group" aria-label="Accent color">
+                  {inks.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-label={`${item.label} accent`}
+                      aria-pressed={ink === item.id}
+                      title={item.label}
+                      onClick={() => setInk(item.id)}
+                      className="inline-flex size-9 items-center justify-center rounded-full"
+                    >
+                      <span
+                        className={
+                          `size-5 rounded-full swatch-${item.id} transition-transform ` +
+                          (ink === item.id ? "scale-110 ring-2 ring-fg ring-offset-2 ring-offset-bg" : "opacity-80")
+                        }
+                      />
+                    </button>
+                  ))}
+                </div>
                 <button
-                  key={item.id}
                   type="button"
-                  aria-label={`${item.label} accent`}
-                  aria-pressed={ink === item.id}
-                  onClick={() => setInk(item.id)}
-                  className={
-                    "inline-flex size-11 items-center justify-center rounded-full border " +
-                    (ink === item.id ? "border-amber" : "border-line")
-                  }
+                  onClick={() => setShowKeys(true)}
+                  aria-label="Keyboard shortcuts"
+                  aria-keyshortcuts="?"
+                  title="Keyboard shortcuts (?)"
+                  className="chip hidden size-11 items-center justify-center rounded-full text-fg sm:inline-flex"
                 >
-                  <span className={`size-6 rounded-full swatch-${item.id}`} />
+                  <Keyboard className="size-4" />
+                </button>
+              </div>
+              {settingsToggle()}
+            </div>
+            <p className="nvr-hide-in-focus max-w-2xl text-sm leading-relaxed text-muted">
+              Choose the Audio voice and read along, and/or download the audio file. (browsers may have limited voice options)
+            </p>
+          </header>
+
+          <article
+            ref={stageRef}
+            aria-label="Now reading"
+            className="nvr-stage glass relative flex min-h-[26rem] flex-col overflow-hidden rounded-[2rem] p-5 sm:p-8"
+          >
+            <div
+              className="pointer-events-none absolute inset-x-0 top-0 h-40 opacity-60"
+              style={{ background: "radial-gradient(60% 100% at 50% 0%, color-mix(in srgb, var(--color-amber) 14%, transparent), transparent)" }}
+              aria-hidden="true"
+            />
+            <div className="relative flex flex-wrap items-center justify-between gap-3 text-sm">
+              <div className="flex items-center gap-3">
+                <span className="rounded-full bg-amber-soft px-3 py-1 font-mono text-xs font-semibold tracking-wide text-amber tabular-nums">
+                  {cards.length === 0 ? "EMPTY" : `${String(index + 1).padStart(2, "0")} / ${String(cards.length).padStart(2, "0")}`}
+                </span>
+                <span className="sr-only">{countLabel}</span>
+                <span className="flex min-w-0 items-center gap-2 text-muted">
+                  <span className="nvr-eq" data-paused={phase !== "playing"} aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <span className="truncate font-medium text-fg">
+                    {auditionId ? `Hearing ${voiceById(auditionId).name}` : speaking.name}
+                  </span>
+                  {rotate && voiceId !== "device" && !auditionId ? <span className="hidden sm:inline">· switches each post</span> : null}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {card ? (
+                  <span className="hidden font-mono text-xs text-muted tabular-nums sm:inline" title="Estimated listening time left in the queue">
+                    {formatDuration(leftInQueue)} left
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setFocusMode(!focusMode)}
+                  aria-pressed={focusMode}
+                  aria-keyshortcuts="f"
+                  aria-label={focusMode ? "Exit focus mode" : "Focus mode"}
+                  title={focusMode ? "Exit focus mode (F)" : "Focus mode (F)"}
+                  className="chip inline-flex size-10 items-center justify-center rounded-full text-fg"
+                >
+                  {focusMode ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                </button>
+              </div>
+            </div>
+
+            <VoiceVisualizer
+              analyser={deviceSpeaking ? null : analyser}
+              active={phase === "playing"}
+              className="relative mt-5 h-16 w-full sm:h-20"
+            />
+
+            <div className="relative mt-5 flex flex-1 flex-col">
+              {card ? (
+                <>
+                  {readAlong()}
+                  <p className="nvr-hide-in-focus mt-4 text-xs text-muted">Tap any sentence to read from there.</p>
+                </>
+              ) : (
+                <div className="flex flex-1 flex-col items-center justify-center gap-4 py-6 text-center">
+                  <span className="relative inline-flex size-20 items-center justify-center rounded-full bg-amber-soft text-amber">
+                    <AudioWaveform className="size-9" />
+                  </span>
+                  <p className="text-2xl font-semibold tracking-tight text-fg">Nothing queued.</p>
+                  <p className="max-w-sm text-sm leading-relaxed text-muted">
+                    Paste text, or load a short sample to hear the voices. You can also drop a .txt or .md file here.
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadSamples("replace")}
+                      className="btn-accent inline-flex min-h-12 items-center gap-2 rounded-full px-5 text-sm font-semibold"
+                    >
+                      <Sparkles className="size-4" />
+                      Load sample text
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="chip inline-flex min-h-12 items-center gap-2 rounded-full px-5 text-sm font-semibold text-fg"
+                    >
+                      <FileText className="size-4" />
+                      Open a file
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="relative mt-6 flex flex-col gap-2">
+              <div className="nvr-progress" role="progressbar" aria-label="Card progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
+                <span style={{ width: `${Math.round(progress * 100)}%` }} />
+              </div>
+              <div className="flex justify-between font-mono text-[11px] text-muted tabular-nums">
+                <span>{formatDuration(cardSeconds - leftOnCard)}</span>
+                <span>−{formatDuration(leftOnCard)}</span>
+              </div>
+            </div>
+
+            <div className="relative mt-4 flex flex-col items-center gap-5" aria-label="Playback">
+              <div className="flex items-center gap-4 sm:gap-6">
+                {skipButton("prev", "lg")}
+                {playButton("lg")}
+                {skipButton("next", "lg")}
+              </div>
+              <div className="nvr-hide-in-focus flex flex-wrap items-center justify-center gap-2">
+                {voicePicker(true)}
+                {downloadButton()}
+                {volumeControl()}
+              </div>
+            </div>
+
+            <div className="relative mt-4 flex flex-col gap-1 text-center">
+              {ttsStatus && !note ? (
+                <p
+                  className={
+                    "text-xs " + (ttsStatus.state === "loading" || ttsStatus.state === "downloading" ? "text-fg" : "text-muted")
+                  }
+                  role="status"
+                >
+                  {ttsStatus.state === "loading" || ttsStatus.state === "downloading" ? (
+                    <Loader2 className="mr-1.5 inline size-3 animate-spin align-[-2px]" />
+                  ) : (
+                    <span className="mr-1.5 inline-block size-1.5 rounded-full bg-amber align-middle" aria-hidden="true" />
+                  )}
+                  {ttsStatus.download?.percent != null
+                    ? `${ttsStatus.message} (${Math.round(ttsStatus.download.percent)}%)`
+                    : ttsStatus.message}
+                </p>
+              ) : null}
+              {error || google.error ? (
+                <p className="text-sm text-danger" role="alert">
+                  {error || google.error}
+                </p>
+              ) : null}
+              {note || google.note ? <p className="text-xs text-muted">{note || google.note}</p> : null}
+            </div>
+          </article>
+
+          <div className="nvr-hide-in-focus glass flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] p-3">
+            <div className="seg" role="group" aria-label="Speed" aria-keyshortcuts="[ ]">
+              {SPEED_OPTIONS.map((opt) => (
+                <button key={opt.label} type="button" onClick={() => setSpeed(opt.value)} aria-pressed={speed === opt.value}>
+                  {opt.label}
                 </button>
               ))}
             </div>
-          </div>
-        </header>
-
-        <div className="sticky top-0 z-10 -mx-4 bg-bg px-4 py-3 sm:-mx-6 sm:px-6">
-          {transportBar("Top playback")}
-        </div>
-
-        <article className="flex min-h-72 flex-1 flex-col rounded-card border border-line bg-surface p-4 sm:p-6">
-          <div className="mb-4 flex items-center justify-between gap-3 text-sm">
-            <span className="font-semibold text-amber tabular-nums">{countLabel}</span>
-            <span className="truncate text-muted">
-              {auditionId ? `Hearing ${voiceById(auditionId).name}` : speaking.name}
-              {rotate && voiceId !== "device" && !auditionId ? " · switches each post" : ""}
-            </span>
-          </div>
-
-          <div className="mb-4 h-1 overflow-hidden rounded-full bg-raise">
-            <div
-              className="h-full bg-amber"
-              style={{ width: `${Math.round(progress * 100)}%` }}
-            />
-          </div>
-
-          {card ? (
-            <p className="flex-1 text-xl leading-snug font-medium text-pretty text-read sm:text-2xl">{card.text}</p>
-          ) : (
-            <div className="flex flex-1 flex-col items-start justify-center gap-4">
-              <p className="text-xl leading-snug font-medium text-fg">Nothing queued.</p>
-              <p className="max-w-sm text-sm leading-relaxed text-muted">
-                Paste text, or load a short sample to hear the voices.
-              </p>
-              <button
-                type="button"
-                onClick={() => loadSamples("replace")}
-                className="inline-flex min-h-12 items-center rounded-full bg-amber px-5 text-sm font-semibold text-ink"
-              >
-                Load sample text
-              </button>
+            <div className="seg" role="group" aria-label="When a card ends">
+              {PLAY_MODE_OPTIONS.map((opt) => (
+                <button key={opt.value} type="button" onClick={() => setPlayMode(opt.value)} aria-pressed={playMode === opt.value} title={opt.hint}>
+                  <opt.icon className="size-4" />
+                  {opt.label}
+                </button>
+              ))}
             </div>
-          )}
-
-          {ttsStatus && !note ? (
-            <p
-              className={
-                "mt-3 text-sm " +
-                (ttsStatus.state === "loading" || ttsStatus.state === "downloading" ? "text-fg" : "text-muted")
-              }
-              role="status"
-            >
-              {ttsStatus.download?.percent != null
-                ? `${ttsStatus.message} (${Math.round(ttsStatus.download.percent)}%)`
-                : ttsStatus.message}
-            </p>
-          ) : null}
-          {(error || google.error) ? (
-            <p className="mt-4 text-sm text-danger" role="alert">
-              {error || google.error}
-            </p>
-          ) : null}
-          {(note || google.note) ? <p className="mt-3 text-sm text-muted">{note || google.note}</p> : null}
-        </article>
-
-        {transportBar("Bottom playback")}
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Speed">
-            {SPEED_OPTIONS.map((opt) => (
-              <button
-                key={opt.label}
-                type="button"
-                onClick={() => setSpeed(opt.value)}
-                aria-pressed={speed === opt.value}
-                className={
-                  "min-h-11 rounded-full px-3 text-sm font-semibold " +
-                  (speed === opt.value ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="When a card ends">
-            {PLAY_MODE_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setPlayMode(opt.value)}
-                aria-pressed={playMode === opt.value}
-                title={opt.hint}
-                className={
-                  "inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-semibold " +
-                  (playMode === opt.value ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                <opt.icon className="size-4" />
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setSoftRoom(!softRoom)}
-            aria-pressed={softRoom}
-            title="A light room tone on playback only. Downloads stay dry."
-            className={
-              "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm font-semibold " +
-              (softRoom ? "border-amber bg-raise text-amber" : "border-line bg-surface text-muted")
-            }
-          >
-            Soft room
-          </button>
-        </div>
-
-        <p className="text-xs leading-relaxed text-muted">
-          {isDesktopApp()
-            ? "Generated voices run on this device once a voice pack is installed in Settings: KittenTTS for the standard voices, Kokoro for Butler and the Indian English voices. Without a pack, the device voice is used. The first sentence starts as soon as it is ready."
-            : "Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian English voices, then from xAI if a key is set. Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready."}
-        </p>
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Queue</h2>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={askClearQueue}
-                disabled={cards.length === 0}
-                className="inline-flex min-h-11 items-center gap-2 rounded-full border border-danger px-3 text-xs font-semibold text-danger disabled:opacity-55"
-              >
-                <Trash2 className="size-4" />
-                Clear queue
-              </button>
-              <button
-                type="button"
-                onClick={askResetSettings}
-                className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-semibold text-fg"
-              >
-                <RotateCcw className="size-4" />
-                Reset to defaults
-              </button>
-            </div>
-          </div>
-          <ul className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto lg:max-h-none">
-            {cards.map((item, i) => {
-              const active = i === index;
-              const v = voiceForCardIn(installedVoices, i, voiceId, rotate);
-              return (
-                <li key={item.id} className="flex items-stretch gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIndex(i);
-                      void playAt(i);
-                    }}
-                    className={
-                      "min-h-14 flex-1 rounded-2xl border px-3 py-2 text-left " +
-                      (active ? "border-amber bg-amber-soft" : "border-line bg-surface")
-                    }
-                  >
-                    <span className="block text-xs font-semibold text-amber tabular-nums">
-                      {i + 1} · {v.name}
-                    </span>
-                    <span className="mt-1 line-clamp-2 text-sm leading-snug text-read">{item.text}</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Download card ${i + 1}`}
-                    onClick={() => void downloadCard(i)}
-                    disabled={downloadingId === item.id}
-                    className="inline-flex w-11 items-center justify-center rounded-2xl border border-line text-fg disabled:opacity-55"
-                  >
-                    {downloadingId === item.id ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Download className="size-4" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Remove card ${i + 1}`}
-                    onClick={() => removeCard(item.id)}
-                    className="inline-flex w-11 items-center justify-center rounded-2xl border border-line text-muted"
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (source === "link") void commitPage("append");
-            else commitPaste("append");
-          }}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Add</h2>
-            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="What to add">
-              <button
-                type="button"
-                onClick={() => {
-                  setSource("card");
-                  setComposerNote(null);
-                }}
-                aria-pressed={source === "card"}
-                className={
-                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
-                  (source === "card" ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                Card
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSource("link");
-                  setComposerNote(null);
-                }}
-                aria-pressed={source === "link"}
-                className={
-                  "inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-xs font-semibold " +
-                  (source === "link" ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                <Link2 className="size-3.5" />
-                Link
-              </button>
-            </div>
-          </div>
-          {source === "card" ? (
-            <textarea
-              id="paste"
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                setComposerNote(null);
-              }}
-              rows={5}
-              placeholder="Paste a post or a page. A blank line starts a new card. Each card can be up to 5,000 characters."
-              className="w-full resize-y rounded-2xl border border-line bg-surface px-3 py-3 text-sm leading-relaxed text-fg outline-none placeholder:text-muted focus:border-amber"
-            />
-          ) : (
-            <>
-              <input
-                id="page-url"
-                type="url"
-                inputMode="url"
-                value={pageUrl}
-                onChange={(e) => {
-                  setPageUrl(e.target.value);
-                  setComposerNote(null);
-                }}
-                placeholder="https://example.com/article"
-                className="min-h-12 w-full rounded-2xl border border-line bg-surface px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
-              />
-              <p className="text-xs leading-relaxed text-muted">
-                A page is queued in pieces of about 2,000 characters, split on a word.
-              </p>
-            </>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {google.addFromDriveButton}
-            <button
-              type="submit"
-              disabled={reading}
-              className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full bg-amber px-4 text-sm font-semibold text-ink disabled:opacity-55"
-            >
-              {reading ? <Loader2 className="size-4 animate-spin" /> : source === "link" ? <Link2 className="size-4" /> : <Plus className="size-4" />}
-              {reading ? "Reading page" : source === "link" ? "Read page" : "Add to lane"}
-            </button>
             <button
               type="button"
-              disabled={reading}
-              onClick={() => (source === "link" ? void commitPage("replace") : commitPaste("replace"))}
-              className="inline-flex min-h-12 items-center justify-center rounded-full border border-line px-4 text-sm font-semibold text-fg disabled:opacity-55"
+              onClick={() => setSoftRoom(!softRoom)}
+              aria-pressed={softRoom}
+              title="A light room tone on playback only. Downloads stay dry."
+              className={
+                "inline-flex min-h-11 items-center gap-2.5 rounded-full border px-3 text-sm font-semibold transition-colors " +
+                (softRoom ? "border-amber bg-amber-soft text-amber" : "chip text-muted")
+              }
             >
-              Replace
+              <span
+                className={
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (softRoom ? "bg-amber" : "bg-track/50")
+                }
+                aria-hidden="true"
+              >
+                <span
+                  className={
+                    "absolute size-4 rounded-full bg-fg shadow transition-transform " + (softRoom ? "translate-x-[18px] bg-ink" : "translate-x-0.5")
+                  }
+                />
+              </span>
+              <Waves className="size-4" />
+              Soft room
             </button>
           </div>
-          {composerNote ? <p className="text-xs text-muted">{composerNote}</p> : null}
-        </form>
-      </section>
 
-      <aside className="nvr-aside border-line lg:border-l" aria-label="Settings" aria-hidden={!settingsOpen && wide ? true : undefined}>
-        <div className="nvr-aside-inner flex min-h-full flex-col gap-6 px-4 py-6 pb-safe sm:px-6 lg:max-h-dvh lg:overflow-y-auto lg:px-5 lg:py-8">
-        <div className="flex items-center justify-between gap-3 lg:hidden">
-          <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Settings</h2>
-          <button type="button" onClick={() => setSettingsOpen(false)} aria-label="Close settings" className="inline-flex size-11 items-center justify-center rounded-full border border-line text-fg">
-            <PanelRightClose className="size-4" />
+          <p className="nvr-hide-in-focus px-1 text-xs leading-relaxed text-muted">
+            {isDesktopApp()
+              ? "Generated voices run on this device once a voice pack is installed in Settings: KittenTTS for the standard voices, Kokoro for Butler and the Indian English voices. Without a pack, the device voice is used. The first sentence starts as soon as it is ready."
+              : "Generated voices come from local VoiceStudio on port 3900, from the Kokoro helper on port 3901 for Butler and the Indian English voices, then from xAI if a key is set. Otherwise the browser device voice is used and every named voice will sound the same. The first sentence starts as soon as it is ready."}
+          </p>
+
+          <section className="nvr-hide-in-focus glass flex flex-col gap-3 rounded-[1.5rem] p-4 sm:p-5" aria-labelledby="nvr-queue-title">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-baseline gap-3">
+                <h2 id="nvr-queue-title" className="text-sm font-semibold tracking-[0.08em] text-fg uppercase">
+                  Queue
+                </h2>
+                <span className="font-mono text-xs text-muted tabular-nums">
+                  {cards.length} {cards.length === 1 ? "card" : "cards"}
+                  {cards.length ? ` · ${formatDuration(secondsToRead(cards.reduce((sum, item) => sum + wordCount(item.text), 0), speed))}` : ""}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={askClearQueue}
+                  disabled={cards.length === 0}
+                  className="inline-flex min-h-10 items-center gap-2 rounded-full border border-danger/60 px-3 text-xs font-semibold text-danger hover:bg-danger/10"
+                >
+                  <Trash2 className="size-4" />
+                  Clear queue
+                </button>
+                <button
+                  type="button"
+                  onClick={askResetSettings}
+                  className="chip inline-flex min-h-10 items-center gap-2 rounded-full px-3 text-xs font-semibold text-fg"
+                >
+                  <RotateCcw className="size-4" />
+                  Reset to defaults
+                </button>
+              </div>
+            </div>
+            {cards.length === 0 ? (
+              <p className="rounded-2xl border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
+                Your queue is empty. Add a card below.
+              </p>
+            ) : (
+              <ul className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto pr-1">
+                {cards.map((item, i) => {
+                  const active = i === index;
+                  const v = voiceForCardIn(installedVoices, i, voiceId, rotate);
+                  return (
+                    <li key={item.id} className="flex items-stretch gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIndex(i);
+                          void playAt(i);
+                        }}
+                        data-active={active ? "true" : undefined}
+                        className="nvr-row chip flex min-h-14 flex-1 items-start gap-3 rounded-2xl px-3 py-2.5 text-left"
+                      >
+                        <span
+                          className={
+                            "mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-lg font-mono text-xs font-semibold tabular-nums " +
+                            (active ? "bg-amber text-ink" : "bg-raise text-muted")
+                          }
+                        >
+                          {active && phase === "playing" ? (
+                            <span className="nvr-eq" aria-hidden="true" style={{ height: 10 }}>
+                              <i style={{ background: "currentColor" }} />
+                              <i style={{ background: "currentColor" }} />
+                              <i style={{ background: "currentColor" }} />
+                            </span>
+                          ) : (
+                            i + 1
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-2 text-xs font-semibold text-amber">
+                            <span className="sr-only">{i + 1} · </span>
+                            {v.name}
+                            <span className="font-mono font-normal text-muted tabular-nums">
+                              {formatDuration(secondsToRead(wordCount(item.text), speed))}
+                            </span>
+                          </span>
+                          <span className="mt-1 line-clamp-2 text-sm leading-snug text-read">{item.text}</span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Download card ${i + 1}`}
+                        onClick={() => void downloadCard(i)}
+                        disabled={downloadingId === item.id}
+                        className="chip inline-flex w-11 items-center justify-center rounded-2xl text-fg"
+                      >
+                        {downloadingId === item.id ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Remove card ${i + 1}`}
+                        onClick={() => removeCard(item.id)}
+                        className="chip inline-flex w-11 items-center justify-center rounded-2xl text-muted hover:text-danger"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <form
+            className="nvr-hide-in-focus glass flex flex-col gap-3 rounded-[1.5rem] p-4 sm:p-5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (source === "link") void commitPage("append");
+              else commitPaste("append");
+            }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold tracking-[0.08em] text-fg uppercase">Add</h2>
+              <div className="seg" role="group" aria-label="What to add">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSource("card");
+                    setComposerNote(null);
+                  }}
+                  aria-pressed={source === "card"}
+                >
+                  <Plus className="size-3.5" />
+                  Card
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSource("link");
+                    setComposerNote(null);
+                  }}
+                  aria-pressed={source === "link"}
+                >
+                  <Link2 className="size-3.5" />
+                  Link
+                </button>
+              </div>
+            </div>
+            {source === "card" ? (
+              <div className="relative">
+                <textarea
+                  id="paste"
+                  value={draft}
+                  onChange={(e) => {
+                    setDraft(e.target.value);
+                    setComposerNote(null);
+                  }}
+                  rows={5}
+                  placeholder="Paste a post or a page. A blank line starts a new card. Each card can be up to 5,000 characters."
+                  className="w-full resize-y rounded-2xl border border-line bg-bg/50 px-4 py-3 text-sm leading-relaxed text-fg outline-none placeholder:text-muted focus:border-amber focus:ring-4 focus:ring-amber/15"
+                />
+                {draft ? (
+                  <span className="pointer-events-none absolute right-3 bottom-3 font-mono text-[11px] text-muted tabular-nums">
+                    {wordCount(draft)} words · {formatDuration(secondsToRead(wordCount(draft), speed))}
+                  </span>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                <input
+                  id="page-url"
+                  type="url"
+                  inputMode="url"
+                  value={pageUrl}
+                  onChange={(e) => {
+                    setPageUrl(e.target.value);
+                    setComposerNote(null);
+                  }}
+                  placeholder="https://example.com/article"
+                  className="min-h-12 w-full rounded-2xl border border-line bg-bg/50 px-4 text-sm text-fg outline-none placeholder:text-muted focus:border-amber focus:ring-4 focus:ring-amber/15"
+                />
+                <p className="text-xs leading-relaxed text-muted">A page is queued in pieces of about 2,000 characters, split on a word.</p>
+              </>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {google.addFromDriveButton}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="chip inline-flex min-h-12 items-center justify-center gap-2 rounded-full px-4 text-sm font-semibold text-fg"
+              >
+                <FileText className="size-4" />
+                Open file
+              </button>
+              <button
+                type="submit"
+                disabled={reading}
+                className="btn-accent inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-full px-4 text-sm font-semibold"
+              >
+                {reading ? <Loader2 className="size-4 animate-spin" /> : source === "link" ? <Link2 className="size-4" /> : <Plus className="size-4" />}
+                {reading ? "Reading page" : source === "link" ? "Read page" : "Add to lane"}
+              </button>
+              <button
+                type="button"
+                disabled={reading}
+                onClick={() => (source === "link" ? void commitPage("replace") : commitPaste("replace"))}
+                className="chip inline-flex min-h-12 items-center justify-center rounded-full px-4 text-sm font-semibold text-fg"
+              >
+                Replace
+              </button>
+            </div>
+            {composerNote ? <p className="text-xs text-muted">{composerNote}</p> : null}
+          </form>
+        </section>
+
+        <aside
+          className="nvr-aside lg:border-l lg:border-line/60"
+          aria-label="Settings"
+          aria-hidden={!settingsOpen && wide ? true : undefined}
+        >
+          <div className="nvr-aside-inner flex min-h-full flex-col gap-6 px-4 py-6 pb-safe sm:px-6 lg:sticky lg:top-0 lg:max-h-dvh lg:overflow-y-auto lg:px-5 lg:py-7">
+            <div className="flex items-center justify-between gap-3 lg:hidden">
+              <h2 className="text-sm font-semibold tracking-[0.08em] text-fg uppercase">Settings</h2>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Close settings"
+                className="chip inline-flex size-11 items-center justify-center rounded-full text-fg"
+              >
+                <PanelRightClose className="size-4" />
+              </button>
+            </div>
+            {google.accountCard}
+            {packs ? <VoicePackSettings packs={packs} onChange={setPacks} /> : null}
+            <div className="glass flex flex-col gap-3 rounded-[1.5rem] p-4">
+              {isDesktopApp() ? null : (
+                <div className="flex flex-col gap-2">
+                  <h2 className="text-xs font-semibold tracking-[0.08em] text-muted uppercase">Engine</h2>
+                  <div className="seg w-full" role="group" aria-label="Local voice engine">
+                    {TTS_MODELS.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        onClick={() => setTtsModel(model.id)}
+                        aria-pressed={ttsModel === model.id}
+                        disabled={!availableEngines.includes(model.id)}
+                        title={!availableEngines.includes(model.id) ? "Install the OmniVoice pack in Settings to use this engine." : model.note}
+                        className="flex-1"
+                      >
+                        {model.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <h2 className="text-xs font-semibold tracking-[0.08em] text-muted uppercase">Voices</h2>
+                <div className="seg w-full" role="group" aria-label="Voice mode">
+                  <button type="button" onClick={() => setRotate(false)} aria-pressed={!rotate} className="flex-1">
+                    One voice
+                  </button>
+                  <button type="button" onClick={() => setRotate(true)} aria-pressed={rotate} className="flex-1">
+                    <Shuffle className="size-3.5" />
+                    Switch each post
+                  </button>
+                </div>
+              </div>
+              {voicePicker(false)}
+            </div>
+
+            <p className="mt-auto font-mono text-[11px] text-muted">{APP_VERSION_LABEL}</p>
+          </div>
+        </aside>
+      </div>
+
+      <div className="nvr-mini" data-show={showMini ? "true" : "false"} aria-hidden={!showMini} inert={!showMini}>
+        <div className="glass-strong flex items-center gap-3 overflow-hidden rounded-full py-2 pr-2 pl-2 sm:pl-3" aria-label="Mini player">
+          {skipButton("prev", "sm")}
+          {playButton("sm")}
+          {skipButton("next", "sm")}
+          <button
+            type="button"
+            onClick={() => stageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            className="flex min-w-0 flex-1 flex-col text-left"
+            aria-label="Back to the reader"
+          >
+            <span className="truncate text-sm font-semibold text-fg">
+              {card && spokenHere != null ? cardPieces[spokenHere] ?? card.text : card?.text ?? ""}
+            </span>
+            <span className="flex items-center gap-2 text-xs text-muted">
+              <span className="font-mono tabular-nums text-amber">{countLabel}</span>
+              <span className="truncate">{speaking.name}</span>
+            </span>
+            <span className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-fg/10">
+              <span className="block h-full rounded-full bg-amber" style={{ width: `${Math.round(progress * 100)}%` }} />
+            </span>
           </button>
         </div>
-        {google.accountCard}
-        {packs ? <VoicePackSettings packs={packs} onChange={setPacks} /> : null}
-        <div>
-          <div className="mb-3 flex flex-col gap-3">
-            {isDesktopApp() ? null : <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Engine</h2>
-              <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Local voice engine">
-                {TTS_MODELS.map((model) => (
-                  <button
-                    key={model.id}
-                    type="button"
-                    onClick={() => setTtsModel(model.id)}
-                    aria-pressed={ttsModel === model.id}
-                    disabled={!availableEngines.includes(model.id)}
-                    title={!availableEngines.includes(model.id) ? "Install the OmniVoice pack in Settings to use this engine." : model.note}
-                    className={
-                      "min-h-11 rounded-full px-3 text-xs font-semibold " +
-                      (ttsModel === model.id ? "bg-amber text-ink" : "text-muted")
-                    }
-                  >
-                    {model.label}
-                  </button>
-                ))}
-              </div>
-            </div>}
-            <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold tracking-wide text-fg uppercase">Voices</h2>
-            <div className="flex rounded-full border border-line bg-surface p-1" role="group" aria-label="Voice mode">
-              <button
-                type="button"
-                onClick={() => setRotate(false)}
-                aria-pressed={!rotate}
-                className={
-                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
-                  (!rotate ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                One voice
-              </button>
-              <button
-                type="button"
-                onClick={() => setRotate(true)}
-                aria-pressed={rotate}
-                className={
-                  "min-h-11 rounded-full px-3 text-xs font-semibold " +
-                  (rotate ? "bg-amber text-ink" : "text-muted")
-                }
-              >
-                Switch each post
-              </button>
-            </div>
-            </div>
-          </div>
-          {voicePicker(false)}
-        </div>
-
-        <p className="mt-auto text-xs text-muted">{APP_VERSION_LABEL}</p>
-        </div>
-      </aside>
       </div>
+
+      {dragging ? (
+        <div className="nvr-drop" aria-hidden="true">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <span className="btn-accent inline-flex size-16 items-center justify-center rounded-2xl">
+              <FileText className="size-7" />
+            </span>
+            <p className="text-xl font-semibold text-fg">Drop to add to the queue</p>
+            <p className="text-sm text-muted">Plain text and Markdown files</p>
+          </div>
+        </div>
+      ) : null}
+
+      {showKeys ? (
+        <div className="nvr-dialog-root" role="presentation">
+          <button type="button" className="nvr-dialog-backdrop" aria-label="Close" onClick={() => setShowKeys(false)} />
+          <div className="nvr-dialog" role="dialog" aria-modal="true" aria-labelledby="nvr-keys-title" style={{ width: "min(26rem, 100%)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="nvr-keys-title" className="text-base font-semibold text-fg">
+                Keyboard shortcuts
+              </h2>
+              <button type="button" aria-label="Close" onClick={() => setShowKeys(false)} className="inline-flex size-10 items-center justify-center rounded-full text-muted">
+                <X className="size-5" />
+              </button>
+            </div>
+            <dl className="mt-4 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-3 text-sm">
+              {(
+                [
+                  [["Space"], "Play or pause"],
+                  [["←", "→"], "Previous or next card"],
+                  [["[", "]"], "Slower or faster"],
+                  [["M"], "Mute or unmute"],
+                  [["F"], "Focus mode"],
+                  [[","], "Show or hide settings"],
+                  [["?"], "This list"],
+                  [["Esc"], "Close"],
+                ] as const
+              ).map(([keys, label]) => (
+                <div key={label} className="contents">
+                  <dt className="flex gap-1">
+                    {keys.map((k) => (
+                      <kbd key={k}>{k}</kbd>
+                    ))}
+                  </dt>
+                  <dd className="text-muted">{label}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      ) : null}
+
       {google.dialogs}
       {confirmAction ? (
         <div className="nvr-dialog-root" role="presentation">
@@ -1718,13 +2144,21 @@ export function LaneApp() {
           <div className="nvr-dialog" role="alertdialog" aria-modal="true" aria-labelledby="nvr-confirm-title">
             {confirmAction === "clear" ? (
               <>
-                <h2 id="nvr-confirm-title" className="text-base font-semibold text-fg">Clear the queue?</h2>
+                <h2 id="nvr-confirm-title" className="text-base font-semibold text-fg">
+                  Clear the queue?
+                </h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted">
                   This removes every card from the queue. Installed voice packs and your settings stay as they are. You can undo this.
                 </p>
-                <div className="mt-4 flex justify-end gap-2">
-                  <button type="button" onClick={() => setConfirmAction(null)} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-sm font-semibold text-fg">Cancel</button>
-                  <button type="button" onClick={runClearQueue} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-danger bg-raise px-4 text-sm font-semibold text-danger">
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={() => setConfirmAction(null)} className="chip inline-flex min-h-11 items-center rounded-full px-4 text-sm font-semibold text-fg">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={runClearQueue}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-full border border-danger bg-danger/10 px-4 text-sm font-semibold text-danger"
+                  >
                     <Trash2 className="size-4" />
                     Clear queue
                   </button>
@@ -1732,13 +2166,17 @@ export function LaneApp() {
               </>
             ) : (
               <>
-                <h2 id="nvr-confirm-title" className="text-base font-semibold text-fg">Reset settings to defaults?</h2>
+                <h2 id="nvr-confirm-title" className="text-base font-semibold text-fg">
+                  Reset settings to defaults?
+                </h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted">
                   This restores the voice, speed, volume, engine, and settings panel to their defaults. The queue and installed voice packs are not changed. You can undo this.
                 </p>
-                <div className="mt-4 flex justify-end gap-2">
-                  <button type="button" onClick={() => setConfirmAction(null)} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-sm font-semibold text-fg">Cancel</button>
-                  <button type="button" onClick={runResetSettings} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-amber px-4 text-sm font-semibold text-ink">
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={() => setConfirmAction(null)} className="chip inline-flex min-h-11 items-center rounded-full px-4 text-sm font-semibold text-fg">
+                    Cancel
+                  </button>
+                  <button type="button" onClick={runResetSettings} className="btn-accent inline-flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-semibold">
                     <RotateCcw className="size-4" />
                     Reset to defaults
                   </button>

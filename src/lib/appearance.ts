@@ -9,11 +9,11 @@ export type Ink = {
 export const ACCENT_IDS = ["amber", "sky", "sage", "violet"] as const;
 export type AccentId = (typeof ACCENT_IDS)[number];
 
-/** One accent set for both light and dark. Paper/cream was a weak light accent, so that slot is now violet. */
+/** One accent set for both light and dark. Ids stay stable so saved settings carry over. */
 export const ACCENTS: Ink[] = [
-  { id: "amber", label: "Amber" },
-  { id: "sky", label: "Sky" },
-  { id: "sage", label: "Sage" },
+  { id: "amber", label: "Solar" },
+  { id: "sky", label: "Cyan" },
+  { id: "sage", label: "Mint" },
   { id: "violet", label: "Violet" },
 ];
 
@@ -28,43 +28,50 @@ const INK_MIGRATION: Record<string, AccentId> = {
 
 export const THEME_SURFACES = {
   light: {
-    bg: "#f3eee4",
-    surface: "#faf6ee",
-    raise: "#ece4d6",
-    fg: "#1c1914",
-    muted: "#534d45",
-    line: "#cfc4b3",
-    track: "#8e867b",
-    danger: "#b8332a",
-    read: "#1c1914",
+    bg: "#f4f5f9",
+    surface: "#ffffff",
+    raise: "#e8eaf1",
+    fg: "#0c0e14",
+    muted: "#4a5064",
+    line: "#d5d9e3",
+    track: "#7b8194",
+    danger: "#c0262d",
+    read: "#0c0e14",
   },
   dark: {
-    bg: "#14161c",
-    surface: "#1c212b",
-    raise: "#262d3a",
-    fg: "#f2eee6",
-    muted: "#a8a196",
-    line: "#3e4656",
-    track: "#7a808c",
-    danger: "#ee8c80",
-    read: "#f2eee6",
+    bg: "#07080d",
+    surface: "#10121a",
+    raise: "#191c27",
+    fg: "#f4f5f8",
+    muted: "#9ba1b5",
+    line: "#272b3a",
+    track: "#6b7186",
+    danger: "#ff8a8a",
+    read: "#eef0f6",
   },
 } as const;
 
+/**
+ * `accent` is used for text and fills; `glow` is a second, decorative hue for
+ * gradients and the aurora backdrop only, never for text.
+ */
 export const ACCENT_TOKENS = {
   light: {
-    amber: { accent: "#8d5508", hover: "#754609", soft: "#f3e6c8", on: "#fff6e8" },
-    sky: { accent: "#1a5a82", hover: "#15486a", soft: "#e3eef6", on: "#f3f8fc" },
-    sage: { accent: "#1b5c40", hover: "#164a33", soft: "#e3f0e9", on: "#eff8f3" },
-    violet: { accent: "#6a348f", hover: "#582b76", soft: "#efe6f7", on: "#f7f2fc" },
+    amber: { accent: "#9a4800", hover: "#7f3b00", soft: "#fdeedd", on: "#fff8f1", glow: "#ff5f8f" },
+    sky: { accent: "#075f9e", hover: "#054d82", soft: "#e0effb", on: "#f4f9ff", glow: "#6d5cff" },
+    sage: { accent: "#066b45", hover: "#045a39", soft: "#dcf4e9", on: "#f0fbf6", glow: "#00a3c4" },
+    violet: { accent: "#6633d1", hover: "#5528b4", soft: "#ece6fd", on: "#f8f5ff", glow: "#e0459e" },
   },
   dark: {
-    amber: { accent: "#e8a23a", hover: "#f0b14a", soft: "#3a2f1c", on: "#1a1206" },
-    sky: { accent: "#7eb6d4", hover: "#90c4dc", soft: "#1c303c", on: "#0b1c26" },
-    sage: { accent: "#7fb89a", hover: "#91c8aa", soft: "#1d3228", on: "#0e2418" },
-    violet: { accent: "#c4a0e6", hover: "#d1b3ee", soft: "#2e243a", on: "#1a1024" },
+    amber: { accent: "#ffb547", hover: "#ffc56e", soft: "#33240c", on: "#1a0f00", glow: "#ff5f8f" },
+    sky: { accent: "#5cd3ff", hover: "#85dfff", soft: "#0c2a38", on: "#001820", glow: "#7c6cff" },
+    sage: { accent: "#4ee6a6", hover: "#78edbd", soft: "#0c2f22", on: "#00190f", glow: "#36c8ff" },
+    violet: { accent: "#b69cff", hover: "#c9b6ff", soft: "#241b44", on: "#12082e", glow: "#ff7ad9" },
   },
 } as const;
+
+/** Browser chrome color for each resolved theme. */
+export const THEME_COLOR = { light: THEME_SURFACES.light.bg, dark: THEME_SURFACES.dark.bg } as const;
 
 export function isThemeName(value: unknown): value is ThemeName {
   return value === "light" || value === "dark" || value === "system";
@@ -124,6 +131,6 @@ export const THEME_BOOT_SCRIPT = `(function(){
     root.setAttribute("data-ink", ink);
     root.style.colorScheme = resolved;
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", resolved === "light" ? "#f3eee4" : "#14161c");
+    if (meta) meta.setAttribute("content", resolved === "light" ? "#f4f5f9" : "#07080d");
   } catch (e) {}
 })();`;

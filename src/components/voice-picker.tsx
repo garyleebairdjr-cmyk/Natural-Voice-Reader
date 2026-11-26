@@ -68,8 +68,8 @@ export function VoicePicker({
           aria-label={compact ? `Voice: ${selected.name}. Open the voice picker.` : "Open the voice picker"}
           className={
             compact
-              ? "inline-flex min-h-12 max-w-48 items-center gap-2 rounded-full border border-line bg-surface px-3 text-left text-sm font-semibold text-fg"
-              : "flex min-h-12 w-full items-center justify-between gap-2 rounded-2xl border border-line bg-surface px-3 text-left text-sm font-semibold text-fg"
+              ? "inline-flex min-h-12 max-w-48 items-center gap-2 rounded-full chip px-3 text-left text-sm font-semibold text-fg"
+              : "flex min-h-12 w-full items-center justify-between gap-2 rounded-2xl chip px-3 text-left text-sm font-semibold text-fg"
           }
         >
           <span className="min-w-0 truncate">{selected.name}</span>
@@ -81,13 +81,13 @@ export function VoicePicker({
           align={compact ? "center" : "start"}
           side="bottom"
           sideOffset={8}
-          className="nvr-voice-popover z-50 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-line bg-surface p-2 shadow-xl"
+          className="nvr-voice-popover z-50 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl chip p-2 shadow-xl"
         >
           <Command label="Voice picker" className="flex flex-col gap-2">
             <Command.Input
               autoFocus
               placeholder="Search voices"
-              className="min-h-11 w-full rounded-xl border border-line bg-bg px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
+              className="min-h-11 w-full rounded-xl border border-line bg-bg/60 px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
             />
             <Command.List className="max-h-80 overflow-y-auto">
               <Command.Empty className="px-3 py-6 text-sm text-muted">No voices match that search.</Command.Empty>

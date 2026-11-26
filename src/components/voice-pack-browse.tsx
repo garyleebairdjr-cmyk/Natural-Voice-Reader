@@ -137,22 +137,22 @@ export function VoicePackBrowseDialog({ open, onClose, onInstalled }: Props) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search packs, languages, or licenses"
-            className="min-h-11 w-full rounded-xl border border-line bg-bg px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
+            className="min-h-11 w-full rounded-xl border border-line bg-bg/60 px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
           />
           <div className="flex flex-wrap gap-2">
-            <select value={language} onChange={(event) => setLanguage(event.target.value)} aria-label="Language" className="min-h-11 rounded-full border border-line bg-surface px-3 text-xs font-semibold text-fg">
+            <select value={language} onChange={(event) => setLanguage(event.target.value)} aria-label="Language" className="min-h-11 rounded-full chip px-3 text-xs font-semibold text-fg">
               <option value="">All languages</option>
               {languages.map((item) => (
                 <option key={item} value={item}>{item}</option>
               ))}
             </select>
-            <select value={gender} onChange={(event) => setGender(event.target.value as typeof gender)} aria-label="Gender" className="min-h-11 rounded-full border border-line bg-surface px-3 text-xs font-semibold text-fg">
+            <select value={gender} onChange={(event) => setGender(event.target.value as typeof gender)} aria-label="Gender" className="min-h-11 rounded-full chip px-3 text-xs font-semibold text-fg">
               <option value="">All genders</option>
               <option value="female">Female</option>
               <option value="male">Male</option>
               <option value="neutral">Neutral</option>
             </select>
-            <select value={license} onChange={(event) => setLicense(event.target.value)} aria-label="License" className="min-h-11 rounded-full border border-line bg-surface px-3 text-xs font-semibold text-fg">
+            <select value={license} onChange={(event) => setLicense(event.target.value)} aria-label="License" className="min-h-11 rounded-full chip px-3 text-xs font-semibold text-fg">
               <option value="">All licenses</option>
               {licenses.map((item) => (
                 <option key={item} value={item}>{item}</option>
@@ -174,7 +174,7 @@ export function VoicePackBrowseDialog({ open, onClose, onInstalled }: Props) {
           ) : result?.packs.length ? (
             <ul className="flex flex-col gap-2">
               {result.packs.map((pack) => (
-                <li key={pack.id} className="rounded-2xl border border-line bg-bg px-3 py-3">
+                <li key={pack.id} className="rounded-2xl border border-line bg-bg/60 px-3 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-fg">{pack.name}</p>
@@ -192,7 +192,7 @@ export function VoicePackBrowseDialog({ open, onClose, onInstalled }: Props) {
                       type="button"
                       disabled={pack.installed || busyId === pack.id}
                       onClick={() => setPending(pack)}
-                      className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border border-amber bg-amber px-3 text-xs font-semibold text-ink disabled:opacity-40"
+                      className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-full btn-accent px-3 text-xs font-semibold disabled:opacity-40"
                     >
                       {pack.installed ? "Installed" : "Install"}
                     </button>
@@ -219,7 +219,7 @@ export function VoicePackBrowseDialog({ open, onClose, onInstalled }: Props) {
                   value={newUrl}
                   onChange={(event) => setNewUrl(event.target.value)}
                   placeholder="https://github.com/example/repo/raw/main/catalog.json"
-                  className="min-h-11 flex-1 rounded-xl border border-line bg-bg px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
+                  className="min-h-11 flex-1 rounded-xl border border-line bg-bg/60 px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-amber"
                 />
                 <button type="button" onClick={() => void addUrl()} className="inline-flex min-h-11 items-center rounded-full bg-amber px-3 text-xs font-semibold text-ink">
                   Add
@@ -251,7 +251,7 @@ export function VoicePackBrowseDialog({ open, onClose, onInstalled }: Props) {
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <button type="button" onClick={() => setPending(null)} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-sm font-semibold text-fg">Cancel</button>
-            <button type="button" disabled={busyId === pending.id} onClick={() => void confirmInstall()} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-amber px-4 text-sm font-semibold text-ink disabled:opacity-40">
+            <button type="button" disabled={busyId === pending.id} onClick={() => void confirmInstall()} className="inline-flex min-h-11 items-center gap-2 rounded-full btn-accent px-4 text-sm font-semibold disabled:opacity-40">
               {busyId === pending.id ? <Loader2 className="size-4 animate-spin" /> : <Globe className="size-4" />}
               Install pack
             </button>

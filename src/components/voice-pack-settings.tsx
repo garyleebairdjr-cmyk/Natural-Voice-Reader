@@ -60,7 +60,7 @@ export function VoicePackSettings({ packs, onChange }: Props) {
         {desktop ? null : <button
           type="button"
           onClick={() => setBrowseOpen(true)}
-          className="inline-flex min-h-11 items-center gap-2 rounded-full border border-amber bg-amber px-3 text-xs font-semibold text-ink"
+          className="inline-flex min-h-11 items-center gap-2 rounded-full btn-accent px-3 text-xs font-semibold"
         >
           <Globe className="size-4" />
           Browse
@@ -89,7 +89,7 @@ export function VoicePackSettings({ packs, onChange }: Props) {
           const busy = busyId === pack.id || pack.installing;
           const percent = pack.progress?.percent;
           return (
-            <li key={pack.id} className="rounded-2xl border border-line bg-surface px-3 py-3">
+            <li key={pack.id} className="glass rounded-2xl px-3.5 py-3.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-fg">{pack.name}</p>
@@ -118,10 +118,15 @@ export function VoicePackSettings({ packs, onChange }: Props) {
                     </p>
                   ) : null}
                   {pack.progress && pack.installing ? (
-                    <p className="mt-2 text-xs text-fg" role="status">
-                      {pack.progress.message}
-                      {percent != null ? ` (${Math.round(percent)}%)` : ""}
-                    </p>
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      <p className="text-xs text-fg" role="status">
+                        {pack.progress.message}
+                        {percent != null ? ` (${Math.round(percent)}%)` : ""}
+                      </p>
+                      <div className="nvr-progress" aria-hidden="true" style={{ height: 4 }}>
+                        <span style={{ width: `${Math.max(3, Math.round(percent ?? 0))}%` }} />
+                      </div>
+                    </div>
                   ) : null}
                 </div>
                 <button
@@ -131,8 +136,8 @@ export function VoicePackSettings({ packs, onChange }: Props) {
                   className={
                     "inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border px-3 text-xs font-semibold disabled:opacity-40 " +
                     (pack.installed
-                      ? "border-line bg-surface text-muted"
-                      : "border-amber bg-amber text-ink")
+                      ? "border-line bg-surface/60 text-muted hover:text-danger"
+                      : "btn-accent border-transparent")
                   }
                 >
                   {busy ? <Loader2 className="size-4 animate-spin" /> : pack.installed ? "Remove" : "Install"}

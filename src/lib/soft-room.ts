@@ -11,6 +11,7 @@ type Graph = {
   filter: BiquadFilterNode;
   convolver: ConvolverNode;
   master: GainNode;
+  analyser: AnalyserNode;
 };
 
 const graphs = new WeakMap<HTMLAudioElement, Graph>();
@@ -54,7 +55,12 @@ function graphFor(audio: HTMLAudioElement): Graph {
   dry.connect(master);
   wet.connect(master);
   master.connect(ctx.destination);
-  const graph = { ctx, source, dry, wet, filter, convolver, master };
+  // A tap for the visualizer. It reads the signal and does not change it.
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.78;
+  master.connect(analyser);
+  const graph = { ctx, source, dry, wet, filter, convolver, master, analyser };
   graphs.set(audio, graph);
   return graph;
 }
@@ -89,3 +95,19 @@ export function applyPlayback(
   }
 }
 
+
+/**
+ * The analyser for this element's playback graph, for the visualizer.
+ * Building the graph routes the element through Web Audio, so volume then
+ * comes from the master gain, which applyPlayback already handles.
+ */
+export function analyserFor(audio: HTMLAudioElement): AnalyserNode | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const graph = graphFor(audio);
+    if (graph.ctx.state === "suspended") void graph.ctx.resume();
+    return graph.analyser;
+  } catch {
+    return null;
+  }
+}
